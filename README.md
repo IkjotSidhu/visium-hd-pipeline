@@ -323,3 +323,11 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/outputs.R
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/resolutions.R
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/qc_reports.R
 ```
+
+QC reports also include a **Bin Metrics Overview** imported from each library's
+Space Ranger `metrics_summary.csv`: tissue bins/squares, mean reads, mean UMIs,
+mean detected genes, distinct genes and capture-area coverage for 2/8/16 µm,
+plus sequencing/capture and cell segmentation summaries. These are full-library
+source metrics, including in test mode; they precede replicate assignment and
+pipeline QC. Missing fields remain unavailable. CSVs are exported as
+`spaceranger_{bins,sequencing,cells,status}_overview.csv`.

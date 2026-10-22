@@ -1,3 +1,82 @@
+# ---- Source Space Ranger overview (full libraries, before pipeline sampling/QC) ----
+read_spaceranger_overview <- function(sheet) {
+  bins <- list(); sequencing <- list(); cells <- list(); status <- list()
+  for (lib in unique(sheet$library_id)) {
+    path <- file.path(sheet$spaceranger_dir[match(lib,sheet$library_id)], 'metrics_summary.csv')
+    if (!file.exists(path)) {
+      status[[lib]] <- tibble(library_id=lib, source=path, status='Missing metrics_summary.csv')
+      next
+    }
+    source <- tryCatch(read_csv(path, col_types=cols(.default=col_character()), show_col_types=FALSE), error=function(e) NULL)
+    if (is.null(source) || nrow(source) != 1) {
+      status[[lib]] <- tibble(library_id=lib, source=path, status='Unreadable or not a single-library metrics file')
+      next
+    }
+    value <- function(name) {
+      if (!name %in% names(source)) return(NA_real_)
+      x <- source[[name]][1]; v <- suppressWarnings(as.numeric(gsub('[,%]', '', x)))
+      if (grepl('%',x,fixed=TRUE)) v <- v/100
+      v
+    }
+    status[[lib]] <- tibble(library_id=lib, source=path, status='Loaded')
+    for (size in c(2,8,16)) {
+      unit <- if (size == 2) 'Square' else 'Bin'
+      plural <- if (size == 2) 'Squares' else 'Bins'
+      suffix <- paste0(' ',size,' µm')
+      row <- tibble(library_id=lib, bin_size_um=size,
+        bins_under_tissue=value(paste0('Number of ',plural,' Under Tissue',suffix)),
+        mean_reads=value(paste0('Mean Reads Under Tissue per ',unit,suffix)),
+        mean_umi=value(paste0('Mean UMIs Under Tissue per ',unit,suffix)),
+        mean_genes=value(paste0('Mean Genes Under Tissue per ',unit,suffix)),
+        tissue_bins_pct=100*value(paste0('Fraction of ',plural,' Under Tissue',suffix)),
+        genes_detected=value(paste0('Total Genes Detected Under Tissue',suffix)))
+      if (any(!is.na(unlist(row[,-c(1,2)])))) bins[[paste(lib,size)]] <- row
+    }
+    sequencing[[lib]] <- tibble(library_id=lib, reads=value('Number of Reads'),
+      saturation_pct=100*value('Sequencing Saturation'), valid_barcodes_pct=100*value('Valid Barcodes'),
+      mapped_probe_pct=100*value('Reads Mapped Confidently to Probe Set'),
+      reads_tissue_pct=100*value('Fraction Reads in Squares Under Tissue'),
+      umi_per_mm2=value('UMIs per sq mm of Tissue'), reads_per_mm2=value('Reads per sq mm of Tissue'))
+    cells[[lib]] <- tibble(library_id=lib, n_cells=value('Number of Cells'),
+      reads_cells_pct=100*value('Reads in Cells'), umi_cells_pct=100*value('UMIs in Cells'),
+      mean_reads=value('Mean Reads per Cell'), median_umi=value('Median UMIs per Cell'),
+      median_genes=value('Median Genes per Cell'), median_cell_area_um2=value('Median Cell Area (μm²)'),
+      median_nucleus_area_um2=value('Median Nucleus Area (μm²)'))
+  }
+  list(bins=bind_rows(bins), sequencing=bind_rows(sequencing), cells=bind_rows(cells), status=bind_rows(status))
+}
+
+render_spaceranger_overview <- function(x, table_prefix, max_rows, id_prefix) {
+  if (is.null(x)) return(character())
+  labels <- c(bin_size_um='Bin size (µm)', bins_under_tissue='Bins under tissue', mean_reads='Mean reads/unit',
+    mean_umi='Mean UMIs/unit',mean_genes='Mean genes/unit',tissue_bins_pct='Bins under tissue (%)',
+    genes_detected='Distinct genes detected',reads='Sequenced reads',saturation_pct='Sequencing saturation (%)',
+    valid_barcodes_pct='Valid barcodes (%)',mapped_probe_pct='Confident probe mapping (%)',
+    reads_tissue_pct='Reads under tissue (%)',umi_per_mm2='UMIs/mm² tissue',reads_per_mm2='Reads/mm² tissue',
+    n_cells='Cells',reads_cells_pct='Reads in cells (%)',umi_cells_pct='UMIs in cells (%)',
+    median_umi='Median UMIs/cell',median_genes='Median genes/cell',median_cell_area_um2='Median cell area (µm²)',
+    median_nucleus_area_um2='Median nucleus area (µm²)',library_id='Capture area')
+  table <- function(data) {
+    for (n in names(data)) if (is.numeric(data[[n]])) {
+      digits <- if (grepl('pct$|^mean_|^median_',n)) 1 else 0
+      data[[n]] <- ifelse(is.na(data[[n]]),'—',formatC(data[[n]],format='f',digits=digits,big.mark=','))
+    }
+    names(data) <- ifelse(names(data) %in% names(labels),labels[names(data)],names(data))
+    html_table(data,max_rows)
+  }
+  out <- c(paste0('<section id="',id_prefix,'qc-bin-overview"><h3>Bin Metrics Overview — Space Ranger</h3>'),
+    '<p>Full capture-area metrics imported from Space Ranger, before pipeline replicate assignment, test sampling and QC. These values remain full-library totals even in a test run. 2 µm squares are shown for context; the pipeline analyzes the configured 8 µm, 16 µm and cell outputs.</p>',
+    '<p>Mean genes refers to genes per bin; distinct genes is the union detected across tissue. The percentage of bins under tissue describes capture-area coverage, not the fraction passing pipeline QC.</p>')
+  for (field in c('bins','sequencing','cells')) {
+    data <- x[[field]]
+    out <- c(out,paste0('<h4>',switch(field,bins='Bins under tissue',sequencing='Sequencing and capture',cells='Cell segmentation metrics'),'</h4>'))
+    out <- c(out,if (nrow(data)) table(data) else '<p>Unavailable in supplied Space Ranger metrics.</p>',
+      paste0('<p><a href="',html_escape(paste0(table_prefix,'spaceranger_',field,'_overview.csv')),'">Download CSV</a></p>'))
+  }
+  out <- c(out,'<details><summary>Source files and availability</summary>',table(x$status),'</details></section>')
+  out
+}
+
 # ---- Readable QC summaries ----
 # All means are calculated over individual bins/cells, never means of means.
 # Retention starts at assigned, test-selected units entering the pipeline's QC.
@@ -63,6 +142,7 @@ build_qc_reports <- function(qc_df, sheet, cfg, count_col, feature_col, flow = t
   for (field in c('summary','metrics','retention')) replicate[[field]] <- replicate[[field]] |> left_join(context, by = 'replicate_id')
   if (nrow(flow)) flow <- flow |> left_join(data |> group_by(library_id) |> summarise(n_after_qc = sum(pass), .groups = 'drop'), by = 'library_id')
   list(group = group, sample = sample, replicate = replicate, flow = flow, settings = settings,
+       spaceranger = if ('spaceranger_dir' %in% names(sheet)) read_spaceranger_overview(sheet) else NULL,
        unit_name = if (cfg$bin_size == 'cells') 'cells' else paste0(as.integer(cfg$bin_size), ' µm bins/spots'),
        res_label = cfg$res_label, test_fraction = cfg$test_fraction,
        thresholds = list(min_counts = qc_value(cfg,'min_counts'), min_features = qc_value(cfg,'min_features'), max_mt_pct = qc_value(cfg,'max_mt_pct')))
@@ -94,6 +174,7 @@ render_qc_sections <- function(reports, table_prefix = 'tables/', max_rows = 100
            '; mitochondrial UMIs ≤ ',reports$thresholds$max_mt_pct,'%. Means/medians refer to individual ',unit,'.</p>'),
     '<p>Before QC means assigned units selected for this run. Test sampling and unassigned units are separate from QC failures. Gene metrics count detected genes per unit, not distinct genes across a group.</p>')
   if (!is.null(reports$test_fraction)) out <- c(out, paste0('<p class="notice">Test run: ',100*reports$test_fraction,'% of each replicate was selected before QC. Counts are not full-dataset totals.</p>'))
+  out <- c(out, render_spaceranger_overview(reports$spaceranger,table_prefix,max_rows,id_prefix))
   for (level in c('group','sample','replicate')) {
     x <- reports[[level]]; keys <- x$keys
     out <- c(out, paste0('<section id="',id(level),'"><h3>',switch(level,group='Groups',sample='Samples',replicate='Replicates'),'</h3>'),
@@ -116,6 +197,8 @@ render_qc_sections <- function(reports, table_prefix = 'tables/', max_rows = 100
 }
 
 write_qc_reports <- function(reports, cfg) {
+  if (!is.null(reports$spaceranger)) for (field in names(reports$spaceranger))
+    write_csv(reports$spaceranger[[field]],tab_path(cfg,paste0('spaceranger_',field,'_overview.csv')))
   for (level in c('group','sample','replicate')) {
     write_csv(reports[[level]]$summary,tab_path(cfg,paste0('qc_by_',level,'.csv')))
     write_csv(reports[[level]]$metrics,tab_path(cfg,paste0('qc_metrics_by_',level,'.csv')))
@@ -126,7 +209,7 @@ write_qc_reports <- function(reports, cfg) {
   document <- c('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
     '<title>QC report</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:1250px;margin:35px auto;padding:0 20px;color:#243247;background:#f8fafc}section{padding:20px;background:white;border:1px solid #dce2e8;border-radius:8px;margin:20px 0}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left;white-space:nowrap}th{background:#edf3f8}.table-scroll{overflow:auto}a{color:#165c9c}summary{cursor:pointer}.notice{background:#fff4db;padding:12px}</style></head><body>',
     paste0('<h1>',html_escape(cfg$project_name),' — quality control</h1>'),
-    '<nav><a href="#qc-group">Groups</a> · <a href="#qc-sample">Samples</a> · <a href="#qc-replicate">Replicates</a></nav>',
+    '<nav><a href="#qc-bin-overview">Bin metrics</a> · <a href="#qc-group">Groups</a> · <a href="#qc-sample">Samples</a> · <a href="#qc-replicate">Replicates</a></nav>',
     render_qc_sections(reports,max_rows = cfg$qc$report$max_rows),
     '<p>Raw CSVs retain numeric precision; displayed values are rounded. Post-QC statistics for empty groups are unavailable (—), not zero.</p></body></html>')
   writeLines(document,file.path(cfg$step_dir,'qc_report.html'),useBytes = TRUE)

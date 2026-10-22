@@ -40,3 +40,21 @@ stopifnot(all(c('qc_by_group.csv','qc_by_sample.csv','qc_by_replicate.csv') %in%
           grepl('&lt;QC test&gt;',html,fixed=TRUE),!grepl('<QC test>',html,fixed=TRUE))
 unlink(root,recursive=TRUE)
 cat('QC reporting checks passed\n')
+# Source overview preserves full-library metrics and does not pool libraries.
+source_root <- tempfile('sr-metrics-'); dir.create(source_root)
+fixture <- tibble(`Number of Bins Under Tissue 8 µm`='100',
+ `Mean UMIs Under Tissue per Bin 8 µm`='123.5',
+ `Fraction of Bins Under Tissue 8 µm`='25%', `Sequencing Saturation`='0.6',
+ `Number of Cells`='42')
+write_csv(fixture,file.path(source_root,'metrics_summary.csv'))
+overview <- read_spaceranger_overview(tibble(library_id=c('L1','L1','L2'),
+ spaceranger_dir=c(source_root,source_root,file.path(source_root,'absent'))))
+stopifnot(nrow(overview$bins)==1,overview$bins$bin_size_um==8,
+ overview$bins$mean_umi==123.5,overview$bins$tissue_bins_pct==25,
+ overview$sequencing$saturation_pct==60,overview$cells$n_cells==42,
+ nrow(overview$status)==2,grepl('Missing',overview$status$status[2]))
+rendered <- paste(render_spaceranger_overview(overview,'tables/',100,''),collapse='\n')
+stopifnot(grepl('Bin Metrics Overview',rendered),grepl('full-library totals',rendered),
+ grepl('spaceranger_bins_overview.csv',rendered))
+unlink(source_root,recursive=TRUE)
+cat('Space Ranger overview checks passed\n')
