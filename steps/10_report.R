@@ -30,7 +30,7 @@ if (dir.exists(assignment)) {
   parts <- c(parts, '<section><h2>Replicate assignment</h2>',
              paste0('<p>', vapply(images, link, character(1)), '</p>'), '</section>')
 }
-summary_files <- c('02_load_qc/tables/qc_summary.csv', '03_cluster/tables/clustering_resolution_summary.csv',
+summary_files <- c( '03_cluster/tables/clustering_resolution_summary.csv',
   '06_pseudobulk_de/tables/pseudobulk_de_status.csv',
   '06_pseudobulk_de/tables/pseudobulk_de_summary.csv',
   '06_pseudobulk_de/tables/pseudobulk_diagnostics_status.csv',
@@ -50,6 +50,16 @@ for (res in resolutions) {
     state <- if (!isTRUE(enabled)) 'disabled in current config' else if (complete) 'artifacts present' else 'missing/incomplete'
     parts <- c(parts, paste0('<p><strong>', html_escape(step), '</strong>: ', html_escape(state),
       if (complete) paste0(' · last completed ', html_escape(as.character(file.info(params)$mtime)), ' · ', link(params, 'settings')) else '', '</p>'))
+  }
+  qc_path <- file.path(root,'02_load_qc','qc_reports.rds')
+  if (file.exists(qc_path)) {
+    reports <- readRDS(qc_path)
+    parts <- c(parts,paste0('<p>',link(file.path(root,'02_load_qc','qc_report.html'),'Open dedicated QC report'),'</p>'),
+      render_qc_sections(reports,table_prefix = paste0(label,'/02_load_qc/tables/'),
+                         max_rows = cfg$report$max_table_rows,id_prefix = paste0(label,'-')))
+  } else {
+    legacy <- file.path(root,'02_load_qc/tables/qc_summary.csv')
+    if (file.exists(legacy)) parts <- c(parts,'<h3>Legacy QC summary</h3>',html_table(read_csv(legacy,show_col_types=FALSE),cfg$report$max_table_rows))
   }
   for (file in summary_files) {
     path <- file.path(root, file)

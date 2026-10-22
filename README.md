@@ -55,7 +55,7 @@ Follow the jobs with `bjobs`; logs are in `output/logs/`.
 | Look at | To check |
 |---|---|
 | `output/01_assign_replicates/figures/replicate_assignment_*.png` | Each tissue piece got the right replicate name |
-| `output/008um/02_load_qc/tables/qc_summary.csv` | How many bins each replicate kept, and why bins were removed |
+| `output/008um/02_load_qc/qc_report.html` | Group, sample and replicate QC summaries, before/after quality and retention |
 | `output/008um/03_cluster/figures/umap_metadata_donor.png` | Donors mix after batch correction |
 | `output/008um/03_cluster/res_1.0/figures/spatial_clusters_*.png` | Clusters on the H&E |
 | `output/008um/04_markers/res_1.0/tables/top10_markers_*.csv` | Marker genes for naming clusters |
@@ -100,6 +100,32 @@ qc:
   min_counts: {"8": 50, "16": 100, cells: 50}
   max_mt_pct: 50
 ```
+
+**Read QC at group, sample and replicate levels:**
+
+Open `output/<bin-size>/02_load_qc/qc_report.html`; the main overview also embeds
+these tables. Samples use `library_id` by default. Select a different sample
+column and grouping variables in the config:
+
+```yaml
+qc:
+  report:
+    sample_col: visium_sample_id
+    group_cols: [condition, donor, tissue]
+```
+
+Each group variable is summarized separately. Tables show unit counts before/
+after QC, retention, mean/median UMIs, mean/median detected genes per unit,
+mitochondrial percentage and contributing samples/replicates. Before-QC values
+and overlapping filter failures are available in expandable details.
+
+Download `qc_by_group.csv`, `qc_by_sample.csv`, and `qc_by_replicate.csv` for
+post-QC metrics with retention. `qc_metrics_by_*.csv` contains both stages;
+`qc_retention_by_*.csv` records filter counts. Means are weighted by individual
+bins/cells; zero-retained entities remain visible with unavailable averages.
+The loading-flow table distinguishes assignment losses and test sampling from
+QC removal. The legacy `qc_summary.csv` is retained for compatibility.
+`qc_unit_metrics.csv.gz` preserves per-unit metrics and QC status for later checks.
 
 **Batch correction** — Harmony runs automatically when the sample sheet has more than one
 donor (or, without a `donor` column, more than one sample). To correct for a different
@@ -295,4 +321,5 @@ module purge && module load R/4.4.1
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/regression.R
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/outputs.R
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/resolutions.R
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/qc_reports.R
 ```
