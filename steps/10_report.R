@@ -14,7 +14,7 @@ parts <- c('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta nam
   '<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1150px;margin:40px auto;padding:0 20px;color:#243247;background:#fafbfc}h1,h2,h3{line-height:1.2}a{color:#165c9c}section{background:white;padding:22px;margin:20px 0;border:1px solid #dce2e8;border-radius:8px}.table-scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}th{background:#eff4f8}img{max-width:100%;height:auto}figure{margin:20px 0}small{color:#556}code{overflow-wrap:anywhere}.notice{border-left:4px solid #c28a2c;padding:12px;background:#fff6e5}</style></head><body>',
   paste0('<h1>', html_escape(cfg$project_name), '</h1><p>Visium HD analysis overview · Generated ', html_escape(format(Sys.time())), '</p>'),
   '<p class="notice">Exploratory analysis. Missing, disabled and skipped outputs are shown explicitly. Existing artifacts may come from different partial runs; inspect step timestamps, settings and provenance before combining results.</p>',
-  paste0('<p>Resolutions: ', html_escape(paste(resolutions, collapse = ', ')), '. ',
+  paste0('<p>Bin sizes / segmented cells: ', html_escape(paste(resolutions, collapse = ', ')), '. ',
          'Pipeline commit: <code>', html_escape(cfg$pipeline_commit %||% 'unavailable'), '</code>. ',
          'Working tree: ', html_escape(cfg$pipeline_worktree %||% 'unavailable'), '.</p>'),
   '<nav><a href="#study">Study</a> · <a href="#provenance">Provenance</a></nav>')
@@ -30,7 +30,7 @@ if (dir.exists(assignment)) {
   parts <- c(parts, '<section><h2>Replicate assignment</h2>',
              paste0('<p>', vapply(images, link, character(1)), '</p>'), '</section>')
 }
-summary_files <- c('02_load_qc/tables/qc_summary.csv',
+summary_files <- c('02_load_qc/tables/qc_summary.csv', '03_cluster/tables/clustering_resolution_summary.csv',
   '06_pseudobulk_de/tables/pseudobulk_de_status.csv',
   '06_pseudobulk_de/tables/pseudobulk_de_summary.csv',
   '06_pseudobulk_de/tables/pseudobulk_diagnostics_status.csv',
@@ -64,10 +64,31 @@ for (res in resolutions) {
   if (length(all_files)) {
     artifact_rows[[label]] <- tibble(resolution = label, path = vapply(all_files, relative, character(1)),
                                     bytes = file.info(all_files)$size, modified = as.character(file.info(all_files)$mtime))
-    images <- all_files[grepl('\\.png$', all_files) &
-      grepl('^(all_bins_pca_|all_bins_sample_distances|annotation_composition|umap_cluster_res_|pathway_)', basename(all_files))]
-    for (path in head(images, 12)) parts <- c(parts, paste0('<figure><a href="', href(path), '"><img loading="lazy" src="',
+    shared_images <- all_files[grepl('\\.png$', all_files) & !grepl('/res_', all_files, fixed = TRUE) &
+      grepl('^(all_bins_pca_|all_bins_sample_distances|pathway_)', basename(all_files))]
+    for (path in shared_images) parts <- c(parts, paste0('<figure><a href="', href(path), '"><img loading="lazy" src="',
       href(path), '" alt="', html_escape(basename(path)), '"></a><figcaption>', html_escape(relative(path)), '</figcaption></figure>'))
+    parts <- c(parts, '<h3>Plots by clustering resolution</h3>',
+      paste0('<p>DE/pathway comparisons use primary clustering resolution ',
+             html_escape(resolution_label(cfg$clustering$main_resolution)), '.</p>'))
+    for (r in cfg$clustering$resolutions) {
+      folder <- paste0('res_', resolution_label(r))
+      selected <- all_files[grepl(paste0('/', folder, '/'), all_files, fixed = TRUE)]
+      images <- selected[grepl('\\.png$', selected)]
+      parts <- c(parts, paste0('<details><summary>Clustering resolution ', html_escape(resolution_label(r)),
+                              ' — ', length(images), ' plots</summary>'))
+      if (!length(images)) parts <- c(parts, '<p>Plots missing or not yet generated for this resolution.</p>')
+      for (stage in c('04_markers', '08_annotation')) {
+        name <- if (stage == '04_markers') 'marker_status.csv' else 'annotation_status.csv'
+        path <- file.path(root, stage, folder, 'tables', name)
+        if (file.exists(path)) parts <- c(parts, paste0('<p>', link(path), '</p>'),
+          html_table(read_csv(path, show_col_types = FALSE), cfg$report$max_table_rows))
+      }
+      # Every PNG is included: no truncation of the requested resolution sweep.
+      for (path in images) parts <- c(parts, paste0('<figure><a href="', href(path), '"><img loading="lazy" src="',
+        href(path), '" alt="', html_escape(relative(path)), '"></a><figcaption>', html_escape(relative(path)), '</figcaption></figure>'))
+      parts <- c(parts, '</details>')
+    }
     parts <- c(parts, '<details><summary>All artifacts, tables and figures</summary><ul>',
                paste0('<li>', vapply(all_files, link, character(1)), '</li>'), '</ul></details>')
   }

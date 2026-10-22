@@ -51,6 +51,7 @@ fixture$replicate_id <- c('R1', 'R1', 'R2', 'R2'); fixture$library_id <- 'L1'
 fixture$x_fullres <- 1:4; fixture$y_fullres <- 1:4
 root <- tempfile('vhd-annotation-'); dir.create(root)
 cfg <- default_config; cfg$output_dir <- root; cfg$res_label <- '008um'; cfg$bin_size <- '8'
+cfg$clustering$resolutions <- 1
 cfg$step <- '08_annotation'; cfg$step_dir <- step_dir(cfg, cfg$step); cfg$start_time <- Sys.time()
 dir.create(file.path(cfg$step_dir, 'tables'), recursive = TRUE)
 dir.create(file.path(cfg$step_dir, 'figures')); dir.create(rds_dir(cfg), recursive = TRUE)
@@ -64,8 +65,9 @@ env$read_step_rds <- function(...) fixture
 env$read_sample_sheet <- function(...) tibble(replicate_id = c('R1', 'R2'), library_id = 'L1', spaceranger_dir = root)
 env$plot_spatial <- function(...) list(); env$save_plot_list <- function(...) invisible(NULL)
 for (expr in as.list(parse('steps/08_annotation.R'))[-1]) eval(expr, env)
-units <- read_csv(tab_path(cfg, 'unit_annotations.csv.gz'), show_col_types = FALSE)
-composition <- read_csv(tab_path(cfg, 'annotation_composition.csv'), show_col_types = FALSE)
+current <- resolution_cfg(cfg, 1, create = FALSE)
+units <- read_csv(tab_path(current, 'unit_annotations.csv.gz'), show_col_types = FALSE)
+composition <- read_csv(tab_path(current, 'annotation_composition.csv'), show_col_types = FALSE)
 stopifnot(sum(units$annotation_status == 'reviewed') == 2, sum(units$broad_type == 'Unannotated') == 2,
           all(tapply(composition$fraction, composition$replicate_id, sum) == 1))
 cfg$annotation$require_complete <- TRUE
@@ -85,3 +87,19 @@ stopifnot(grepl('missing/incomplete', html, fixed = TRUE), grepl('disabled in cu
           !grepl('<script>', html, fixed = TRUE), grepl('&lt;script&gt;', html, fixed = TRUE))
 unlink(root, recursive = TRUE)
 cat('Annotation/report integration fixtures passed\n')
+
+# ---- Stable folder names, distinct bin sizes and resolution-specific labels ----
+stopifnot(identical(default_config$clustering$resolutions, (1:20)/10),
+          identical(vapply(c(0.1, 1, 2), resolution_label, character(1)), c('0.1','1.0','2.0')))
+cfg <- default_config; cfg$output_dir <- tempdir(); cfg$res_label <- '008um'; cfg$bin_size <- '8'; cfg$step <- '08_annotation'
+cfg$annotation$mapping_files <- list('8' = list('0.1' = 'low.csv', '1.0' = 'primary.csv'))
+stopifnot(annotation_mapping(resolution_cfg(cfg, 0.1, FALSE)) == 'low.csv',
+          annotation_mapping(resolution_cfg(cfg, 1, FALSE)) == 'primary.csv')
+cfg$annotation$mapping_files <- list('8' = 'legacy.csv')
+stopifnot(is.null(annotation_mapping(resolution_cfg(cfg, 0.1, FALSE))),
+          annotation_mapping(resolution_cfg(cfg, 1, FALSE)) == 'legacy.csv')
+stopifnot(grepl('/008um/08_annotation/res_0.1$', resolution_cfg(cfg, 0.1, FALSE)$step_dir),
+          identical(rds_path(resolution_cfg(cfg, 0.1, FALSE), '03_cluster'), rds_path(cfg, '03_cluster')),
+          rds_path(resolution_cfg(cfg, 0.1, FALSE), '08_annotation') != rds_path(resolution_cfg(cfg, 1, FALSE), '08_annotation'))
+expect_error(assert_cluster_resolutions(fixture, c(0.1, 1)))
+cat('Resolution path and mapping checks passed\n')

@@ -31,6 +31,10 @@ Runs on Minerva as a chain of LSF jobs. One config file, one command.
 cp /path/to/visium-hd-pipeline/config_template.yaml config.yaml
 ```
 
+The default clustering sweep is **0.1, 0.2, …, 2.0** for each bin/cell size.
+Every resolution gets its own UMAP, spatial cluster maps, composition plots and
+marker dot plots/heatmaps. BANKSY spatial domains use the same default sweep.
+
 At minimum set `sample_sheet`, and — if several pieces share a capture area —
 `replicates: layout: left_to_right` (pieces listed in the sheet in the order they sit on
 the slide). Every option is explained in the template.
@@ -52,9 +56,9 @@ Follow the jobs with `bjobs`; logs are in `output/logs/`.
 |---|---|
 | `output/01_assign_replicates/figures/replicate_assignment_*.png` | Each tissue piece got the right replicate name |
 | `output/008um/02_load_qc/tables/qc_summary.csv` | How many bins each replicate kept, and why bins were removed |
-| `output/008um/03_cluster/figures/umap_donor.png` | Donors mix after batch correction |
-| `output/008um/03_cluster/figures/spatial_cluster_res_*.png` | Clusters on the H&E |
-| `output/008um/04_markers/tables/top10_markers_*.csv` | Marker genes for naming clusters |
+| `output/008um/03_cluster/figures/umap_metadata_donor.png` | Donors mix after batch correction |
+| `output/008um/03_cluster/res_1.0/figures/spatial_clusters_*.png` | Clusters on the H&E |
+| `output/008um/04_markers/res_1.0/tables/top10_markers_*.csv` | Marker genes for naming clusters |
 
 The same folders exist for `016um/` and `cells/`.
 
@@ -133,17 +137,24 @@ invalidate its cache; `force_recompute: true` forces a fresh fit.
 
 **Review and apply cell-type labels:**
 
-Step 08 produces `08_annotation/tables/annotation_template.csv` for each resolution.
-Copy it outside the output folder, fill `broad_type`, optional `cell_state`,
+Step 08 produces `08_annotation/res_0.1/tables/annotation_template.csv` through
+`res_2.0/` for each bin/cell size. Each clustering has its own fingerprint.
+Copy each template outside the output folder, fill `broad_type`, optional `cell_state`,
 `confidence` (`low`, `medium`, `high`) and `evidence`, retaining `cluster` and
 `clustering_key`. Configure one reviewed file per resolution:
 
 ```yaml
 annotation:
-  mapping_files: {"8": metadata/annotations_8.csv, "16": metadata/annotations_16.csv}
+  mapping_files:
+    "8":
+      "0.1": metadata/annotations_8_res0.1.csv
+      "1.0": metadata/annotations_8_res1.0.csv
+    "16":
+      "1.0": metadata/annotations_16_res1.0.csv
   require_complete: false
 ```
 
+A legacy single-file mapping per bin size is used only for `main_resolution`.
 Rerun `-s 08-10`. Missing labels remain `Unannotated`; the original cluster IDs
 are retained. Mappings from a different clustering are rejected. Marker tests are
 annotation evidence, not condition-level inference. Legacy marker tables without
@@ -216,17 +227,36 @@ DE to be enabled. The report is submitted once, after all selected resolution ch
 
 ## Output layout
 
-```
+```text
 output/
 ├── 01_assign_replicates/
-├── 008um/  016um/  cells/        one folder per resolution, each with:
-│   ├── 02_load_qc/  03_cluster/  04_markers/  05_banksy/  06_pseudobulk_de/  07_rctd/  08_annotation/  09_pathways/
-│   │      └── figures/  tables/  params_used.yaml  sessionInfo.txt
-│   └── rds/                      Seurat objects passed between steps
-├── 10_report/                  report settings and artifact index
-├── index.html                  run overview
+├── 008um/                       also 016um/ and cells/
+│   ├── 03_cluster/
+│   │   ├── figures/             shared metadata UMAPs and clustree
+│   │   ├── tables/              comparison across all 20 resolutions
+│   │   ├── res_0.1/             figures/, tables/, settings and session
+│   │   ├── res_0.2/
+│   │   └── ... res_2.0/
+│   ├── 04_markers/res_0.1/ ... res_2.0/
+│   ├── 05_banksy/res_0.1/ ... res_2.0/
+│   ├── 08_annotation/res_0.1/ ... res_2.0/
+│   ├── 02_load_qc/  06_pseudobulk_de/  07_rctd/  09_pathways/
+│   └── rds/                     one shared clustering object, per-resolution annotations
+├── 10_report/
+├── index.html                   expandable gallery for every resolution
 └── logs/
 ```
+
+`main_resolution` selects the default identity and the clustering for DE/pathway
+comparisons. Plotting, marker discovery and annotation run at **every** configured
+clustering resolution. The shared Seurat object stores all cluster labels, without
+copying the full expression matrix 20 times. Missing requested cluster columns
+cause an explicit error directing you to rerun step 03.
+
+Each clustering folder contains UMAP, per-library spatial maps, replicate
+composition and donor-mixing tables. Marker folders contain full/top marker tables
+and PNG/PDF dot plots and heatmaps. A no-marker resolution has explanatory figures
+and a status table. The report includes every resolution's PNGs without truncation.
 
 `params_used.yaml` records the exact settings each step ran with.
 
@@ -264,4 +294,5 @@ Focused checks (from the repository root):
 module purge && module load R/4.4.1
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/regression.R
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/outputs.R
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/resolutions.R
 ```
