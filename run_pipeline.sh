@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# Submit the pipeline as chained LSF jobs: step 01 once, then steps 02-07 for
+# Submit the pipeline as chained LSF jobs: step 01 once, then steps 02-09 for
 # every resolution in bin_sizes (each resolution is its own chain, so 8 um,
-# 16 um and cells run in parallel). Each job waits for the previous step.
+# 16 um and cells run in parallel). Step 10 waits for every selected chain.
 #
 # Usage:
 #   bash run_pipeline.sh config.yaml                 # all steps, all resolutions
@@ -16,7 +16,7 @@ set -euo pipefail
 PIPELINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$(realpath "${1:?Usage: run_pipeline.sh config.yaml [-s 02-05] [-r 8,16,cells] [-t 0.1] [-n]}")"
 shift
-STEPS="01-07"; RES_FILTER=""; DRY=0; TEST=""
+STEPS="01-10"; RES_FILTER=""; DRY=0; TEST=""
 while getopts "s:r:t:n" opt; do
   case $opt in
     s) STEPS="$OPTARG" ;;
@@ -41,13 +41,25 @@ while read -r STEP RES CORES MEM WALL QUEUE PROJECT LOGDIR; do
 
   # Dependency: previous step of this resolution, or step 01 for the first job in a chain
   DEP="${LAST_JOB[$RES]:-$STEP01_JOB}"
-  WAIT=(); [[ -n "$DEP" ]] && WAIT=(-w "done(${DEP})")
+  WAIT=()
+  if [[ "$STEP" == 10_report ]]; then
+    DEPS=()
+    for KEY in "${!LAST_JOB[@]}"; do DEPS+=("done(${LAST_JOB[$KEY]})"); done
+    if [[ ${#DEPS[@]} -eq 0 && -n "$STEP01_JOB" ]]; then DEPS+=("done(${STEP01_JOB})"); fi
+    EXPR=""
+    for ITEM in "${DEPS[@]}"; do EXPR+="${EXPR:+ && }${ITEM}"; done
+    [[ -n "$EXPR" ]] && WAIT=(-w "$EXPR")
+  elif [[ -n "$DEP" ]]; then
+    WAIT=(-w "done(${DEP})")
+  fi
 
   CMD=(bsub -P "$PROJECT" -q "$QUEUE" -n "$CORES" -W "$WALL" -R "rusage[mem=${MEM}]" -R "span[hosts=1]"
        -J "vhd_${STEP}_${RES}" -oo "${LOGDIR}/${STEP}_${RES}.out" -eo "${LOGDIR}/${STEP}_${RES}.err" "${WAIT[@]}"
-       -env "all, STEP=${STEP}, CONFIG=${CONFIG}, RES=${RES}, PIPELINE_DIR=${PIPELINE_DIR}${TEST:+, VHD_TEST_FRACTION=${TEST}}")
+       -env "all, STEP=${STEP}, CONFIG=${CONFIG}, RES=${RES}, PIPELINE_DIR=${PIPELINE_DIR}${TEST:+, VHD_TEST_FRACTION=${TEST}}${RES_FILTER:+, VHD_REPORT_RESOLUTIONS=${RES_FILTER//,/:}}")
   if [[ $DRY -eq 1 ]]; then
-    echo "${CMD[*]} < ${PIPELINE_DIR}/submit_step.sh"; JOB="DRY_${STEP}_${RES}"
+    printf '%q ' "${CMD[@]}"
+    printf '< %q\n' "${PIPELINE_DIR}/submit_step.sh"
+    JOB="DRY_${STEP}_${RES}"
   else
     OUT="$("${CMD[@]}" < "${PIPELINE_DIR}/submit_step.sh" 2>&1)" || true
     JOB="$(grep -oE 'Job <[0-9]+>' <<< "$OUT" | grep -oE '[0-9]+' || true)"

@@ -41,7 +41,8 @@ the slide). Every option is explained in the template.
 bash /path/to/visium-hd-pipeline/run_pipeline.sh config.yaml
 ```
 
-Results appear in `output/`. Follow the jobs with `bjobs`; logs are in `output/logs/`.
+Results appear in `output/`. Open `output/index.html` for the overview after completion.
+Follow the jobs with `bjobs`; logs are in `output/logs/`.
 
 ---
 
@@ -130,6 +131,53 @@ rctd:
 RCTD checks for raw integer counts in the selected assay. Changed inputs or settings
 invalidate its cache; `force_recompute: true` forces a fresh fit.
 
+**Review and apply cell-type labels:**
+
+Step 08 produces `08_annotation/tables/annotation_template.csv` for each resolution.
+Copy it outside the output folder, fill `broad_type`, optional `cell_state`,
+`confidence` (`low`, `medium`, `high`) and `evidence`, retaining `cluster` and
+`clustering_key`. Configure one reviewed file per resolution:
+
+```yaml
+annotation:
+  mapping_files: {"8": metadata/annotations_8.csv, "16": metadata/annotations_16.csv}
+  require_complete: false
+```
+
+Rerun `-s 08-10`. Missing labels remain `Unannotated`; the original cluster IDs
+are retained. Mappings from a different clustering are rejected. Marker tests are
+annotation evidence, not condition-level inference. Legacy marker tables without
+a matching fingerprint are labelled `legacy_unverified`; rerun step 04 to verify them.
+
+**Add a pathway collection:**
+
+```yaml
+pathways:
+  gmt_file: metadata/gene_sets/reactome_human_v97.gmt
+  collection: Reactome human pathways
+  version: "97"
+  gene_id_type: symbol
+```
+
+Rerun `-s 09-10`. GMT gene identifiers must match the DE result identifiers; no ID
+conversion is performed. Enrichment uses all finite signed Wald statistics,
+including nonsignificant genes. Coverage tables explain which sets meet size
+limits; FDR is within each subset/contrast. Ranking ties and numerical warnings are
+recorded in the pathway status table; inspect them before interpreting results.
+The collection version and checksum
+are saved. With no GMT, step 09 reports a skip and writes empty results.
+
+**Rebuild only the overview:**
+
+```bash
+bash run_pipeline.sh config.yaml -s 10-10
+```
+
+The report needs no pandoc or web server. Copy the whole output folder to preserve
+its relative links. It shows available/disabled/missing artifacts and timestamps;
+partial reruns can contain outputs from different runs, so inspect provenance.
+A `-r 8` filter limits the overview to the selected resolution.
+
 **Split tissue pieces by hand** (irregular layouts) — export one CSV per capture area
 from Loupe Browser with columns `barcode` (8 µm) and `replicate_id`, save them as
 `<library_id>.csv` in one folder, and set:
@@ -159,8 +207,12 @@ lsf:
 | **05** BANKSY | Spatial domains (expression + neighbourhood) | Domain labels and maps |
 | **06** pseudobulk DE | Condition comparison with replicates as the unit, whole tissue and per cluster | Results table, summary, volcano plot |
 | **07** RCTD | Cell-type proportions from a single-cell reference | Weights, dominant type maps, composition |
+| **08** annotation | Applies reviewed cluster labels and gathers marker evidence | Mapping template, annotations, spatial maps, replicate composition |
+| **09** pathways | Preranked enrichment from pseudobulk Wald statistics | Enrichment/FDR, leading-edge genes, overlap coverage, collection provenance |
+| **10** report | Collects summaries and figures across resolutions | Static `output/index.html`, artifact index, settings and timestamps |
 
-Steps 05–07 can be switched off in the config (`run: false`).
+Steps 05–10 can be switched off in the config (`run: false`). Pathways also require
+DE to be enabled. The report is submitted once, after all selected resolution chains.
 
 ## Output layout
 
@@ -168,13 +220,19 @@ Steps 05–07 can be switched off in the config (`run: false`).
 output/
 ├── 01_assign_replicates/
 ├── 008um/  016um/  cells/        one folder per resolution, each with:
-│   ├── 02_load_qc/  03_cluster/  04_markers/  05_banksy/  06_pseudobulk_de/  07_rctd/
+│   ├── 02_load_qc/  03_cluster/  04_markers/  05_banksy/  06_pseudobulk_de/  07_rctd/  08_annotation/  09_pathways/
 │   │      └── figures/  tables/  params_used.yaml  sessionInfo.txt
 │   └── rds/                      Seurat objects passed between steps
+├── 10_report/                  report settings and artifact index
+├── index.html                  run overview
 └── logs/
 ```
 
 `params_used.yaml` records the exact settings each step ran with.
+
+Step 06 also writes VST sample PCA plots coloured by available metadata, sample-distance
+heatmaps, library sizes, size factors, PCA coordinates/genes and model matrices.
+`pseudobulk_diagnostics_status.csv` records success or failure per tested subset.
 
 Step 06 also writes:
 
@@ -199,3 +257,11 @@ Minerva with the `R/4.4.1` module. The packages are already in the lab R library
 
 - [FAQ](FAQ.md) — QC choices, replicate splitting, statistics with few replicates, RCTD and HPC troubleshooting.
 - `config_template.yaml` — every option, with defaults.
+
+Focused checks (from the repository root):
+
+```bash
+module purge && module load R/4.4.1
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/regression.R
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/outputs.R
+```
