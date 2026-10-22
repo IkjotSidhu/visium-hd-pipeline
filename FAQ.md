@@ -56,14 +56,17 @@ types entirely** from cross-tissue composition plots and tests rather than compa
 
 **Q: RCTD errors on my labels or counts.**
 Three recurring fixes: (a) RCTD **prohibits `/` in cell-type labels** → sanitize to `-`;
-(b) merged **SCT objects store non-integer RNA counts** → `round()` and coerce to
-`dgCMatrix` before building the reference; (c) drop rare types (**min ~25 cells**) and
+(b) select the original raw-count assay explicitly with
+`reference_assay: RNA`; corrected SCT/integrated counts are unsuitable and rounding
+does not recover raw counts; (c) drop rare types (**min ~25 cells**) and
 special labels (`Unknown`, `Mix cluster remove`). *Example:* a `TA_cells / Early_progenitors`
 label crashed `Reference()` until the slash was replaced.
 
 **Q: Do I have to recompute RCTD every run?**
-No — **cache per-sample RCTD objects to RDS and reload**, recomputing only when the file
-is missing. A full re-run of a 4-sample 8µm deconvolution is many hours; caching makes
+Per-replicate caches are reused only when their fingerprints match the reference
+counts/labels, spatial counts/coordinates, analysis settings and recorded package
+versions. Legacy caches are recomputed. Set `rctd$force_recompute: true` to force a
+fresh fit. `rctd_cache_manifest.csv` records cache reuse and fingerprints. A full re-run of a 4-sample 8µm deconvolution is many hours; caching makes
 iterating on the downstream plots cheap.
 
 ## Reference & Annotation Hygiene
@@ -87,19 +90,25 @@ Keep a two-level scheme so you can deconvolve at either granularity without re-a
 With **2 vs 2** replicates, a two-sided Wilcoxon's **minimum possible p-value is 1/3** —
 it *cannot* be significant no matter how large the effect. Meanwhile **spot-level** tests
 pool hundreds of thousands of spots and are **pseudoreplicated** (massively inflated
-significance). **Neither alone is trustworthy.** *Approach used:* a two-tier rule — call a
-result "high-confidence" only if it is **spot-level significant AND consistent in
-direction across both replicates** in each group, and corroborate with **pseudobulk
-DESeq2** (the correct replication unit). *Example:* Ileum-vs-Duodenum RCTD-proportion and
-DEG comparisons.
+significance). **Neither alone is trustworthy.** Use pseudobulk DESeq2 with the biological design preserved;
+cluster marker tests are descriptive aids for annotation, not replicate-level
+condition tests. Direction agreement across donors is supporting descriptive
+evidence and does not compensate for a small number of donors.
 
 **Q: What does `06_pseudobulk_de` do with so few replicates?**
 It sums counts per replicate (whole tissue and per cluster) and fits DESeq2 with
-`de$covariates` (e.g. donor, for a paired design). Covariates the replicates can't
-support are dropped with a log message, and subsets with too few replicates are skipped.
-Every gene also gets `consistent_across_strata`: whether the direction agrees within
-each level of the first covariate (e.g. every donor) — report genes that are significant
-**and** consistent. With 1–2 replicates per condition, treat results as hypotheses.
+`de$covariates` (e.g. donor, for a paired design). The default
+`covariate_policy: strict` skips subsets that cannot support that exact adjustment.
+`covariate_policy: drop` explicitly permits fallback, recorded in result and status
+tables. This can change the scientific comparison; inspect it before interpreting.
+
+`consistent_across_strata` requires agreement in **all expected strata** of the
+first covariate, with at least `min_strata: 2` paired strata. Insufficient support
+is `NA`; `direction_agrees_available` records agreement in whatever strata were
+available. Without a covariate, there is no stratified replication check.
+The summary reports the number of strata and their support category. With 1–2
+replicates per condition, treat results as hypotheses. All-skipped runs finish
+normally and write header-only results plus a table explaining every skip.
 
 ## Batch Correction
 

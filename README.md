@@ -114,13 +114,21 @@ de:
   covariates: [donor]
 ```
 
+DE preserves requested covariates by default and writes a status table for skipped
+comparisons. The summary includes donor/stratum support; agreement in one donor
+does not count as consistency across donors.
+
 **Deconvolve with a single-cell reference (RCTD):**
 ```yaml
 rctd:
   run: true
   reference_rds: /path/to/reference_seurat.rds
   celltype_col: cell_type
+  reference_assay: RNA
 ```
+
+RCTD checks for raw integer counts in the selected assay. Changed inputs or settings
+invalidate its cache; `force_recompute: true` forces a fresh fit.
 
 **Split tissue pieces by hand** (irregular layouts) — export one CSV per capture area
 from Loupe Browser with columns `barcode` (8 µm) and `replicate_id`, save them as
@@ -167,6 +175,17 @@ output/
 ```
 
 `params_used.yaml` records the exact settings each step ran with.
+
+Step 06 also writes:
+
+- `pseudobulk_de_status.csv`: tested/skipped subsets, reasons and fitted designs.
+- `pseudobulk_sample_eligibility.csv`: units retained per replicate and subset.
+- `pseudobulk_stratum_effects.csv.gz`: descriptive CPM effects within each donor/stratum.
+- `rds/06_pseudobulk_de.rds`: raw and DESeq2-normalized counts, sample metadata and designs for tested subsets.
+- `interpretation_notes.txt`: interpretation guidance and configured study notes.
+
+Step 07 writes `rctd_reference_cells.csv.gz` and `rctd_cache_manifest.csv` for
+reference inclusion and cache provenance.
 
 ---
 
