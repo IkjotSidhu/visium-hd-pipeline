@@ -6,7 +6,7 @@
 # and are deliberately not used.
 #
 # Each result also reports whether the direction agrees within every level of
-# the first covariate (e.g. every donor) - the "high confidence" rule from FAQ.md.
+# the first covariate (e.g. every donor), requiring replicated paired support.
 #
 # Usage: Rscript steps/06_pseudobulk_de.R config.yaml [8|16|cells]
 
@@ -20,14 +20,28 @@ assay    <- DefaultAssay(obj)
 main_col <- paste0('cluster_res_', cfg$clustering$main_resolution)
 covars   <- unlist(de$covariates)
 cond     <- de$condition_col
+notes <- c('Exploratory condition associations; statistical adjustment does not resolve unmeasured confounding.',
+           'Whole-tissue DE can reflect composition and expression changes.',
+           'Per-stratum CPM effects are descriptive and do not provide independent validation p-values.',
+           unlist(de$interpretation_notes))
+writeLines(notes, file.path(cfg$step_dir, 'interpretation_notes.txt'))
 
 # Per-replicate sample table (condition, covariates)
 sample_tbl <- obj[[]] |> distinct(replicate_id, across(all_of(c(cond, covars)))) |> as_tibble()
+if (anyDuplicated(sample_tbl$replicate_id)) stop('Each replicate must have one condition/covariate combination')
 ref_level  <- de$reference %||% sort(unique(sample_tbl[[cond]]))[1]
 log_msg(cfg, 'Testing ', cond, ' vs reference "', ref_level, '"', if (length(covars)) paste0(', adjusting for ', paste(covars, collapse = ' + ')))
 log_msg(cfg, 'Replicates per condition: ', paste(names(table(sample_tbl[[cond]])), table(sample_tbl[[cond]]), sep = '=', collapse = ', '))
 
 counts_all <- LayerData(obj, assay = assay, layer = 'counts')
+status_rows <- list(); sample_rows <- list(); donor_rows <- list(); pseudobulks <- list()
+# Stable schema: all-skipped runs still produce readable, header-only results.
+empty_results <- tibble(subset = character(), contrast = character(), design = character(),
+  dropped_covariates = character(), n_strata_compared = integer(), n_strata_expected = integer(),
+  strata_support = character(), direction_agrees_available = logical(), consistent_across_strata = logical(),
+  gene = character(), baseMean = double(), log2FoldChange = double(), lfcSE = double(),
+  stat = double(), pvalue = double(), padj = double())
+
 
 # ---- One DESeq2 test on a set of pseudobulk samples ----
 # groups: per-unit pseudobulk label (replicate, or replicate x cluster); returns NULL if not testable
@@ -36,7 +50,20 @@ run_deseq <- function(cells, label) {
   n_per  <- table(rep_of)
   keep_reps <- names(n_per)[n_per >= de$min_bins]
   cells  <- cells[rep_of %in% keep_reps]
-  if (length(keep_reps) < 2) return(NULL)
+  eligibility <- sample_tbl |>
+    mutate(subset = label, n_units = as.integer(n_per[replicate_id]),
+           n_units = replace_na(n_units, 0L), eligible = replicate_id %in% keep_reps, .before = 1)
+  sample_rows[[label]] <<- eligibility
+  record_status <- function(status, reason = '', design = '', dropped = '') {
+    status_rows[[label]] <<- tibble(subset = label, status, reason, design,
+                                  dropped_covariates = dropped, n_replicates = length(keep_reps))
+  }
+  skip <- function(reason, design = '', dropped = '') {
+    log_msg(cfg, label, ': ', reason, ' - skipped')
+    record_status('skipped', reason, design, dropped)
+    NULL
+  }
+  if (length(keep_reps) < 2) return(skip('fewer than two eligible replicates'))
 
   # Sum counts per replicate (sparse matrix product with a replicate indicator)
   ind <- Matrix::sparse.model.matrix(~ 0 + rep, data.frame(rep = factor(obj$replicate_id[cells], levels = keep_reps)))
@@ -44,32 +71,33 @@ run_deseq <- function(cells, label) {
   pb <- as.matrix(counts_all[, cells] %*% ind)
   pb <- pb[rowSums(pb) >= 10, , drop = FALSE]                     # drop near-empty genes
 
+  if (!nrow(pb)) return(skip('no genes pass pseudobulk count filtering'))
+  if (any(colSums(pb) == 0)) return(skip('zero library after gene filtering'))
+
   cd <- sample_tbl |> filter(replicate_id %in% keep_reps) |> slice(match(keep_reps, replicate_id)) |>
     mutate(across(all_of(c(cond, covars)), factor))
   # A subset (e.g. a cluster) may lack the reference condition or have only one condition
   if (!ref_level %in% levels(cd[[cond]]) || nlevels(cd[[cond]]) < 2) {
     log_msg(cfg, label, ': only ', paste(levels(cd[[cond]]), collapse = '/'), ' replicates with >= ', de$min_bins, ' units - skipped')
-    return(NULL)
+    return(skip('reference condition absent or fewer than two conditions'))
   }
   cd[[cond]] <- relevel(cd[[cond]], ref = ref_level)
 
-  # Drop covariates the design can't support: one level in this subset (model.matrix
-  # fails), then confounded / no residual df
-  one_level <- covars[vapply(covars, \(v) nlevels(droplevels(cd[[v]])) < 2, logical(1))]
-  if (length(one_level)) log_msg(cfg, label, ': dropping covariate ', paste(one_level, collapse = ', '), ' (one level in this subset)')
-  use_cov <- setdiff(covars, one_level)
-  cd <- cd |> mutate(across(all_of(use_cov), droplevels))
-  repeat {
-    fml <- as.formula(paste('~', paste(c(use_cov, cond), collapse = ' + ')))
-    mm  <- model.matrix(fml, cd)
-    if (qr(mm)$rank == ncol(mm) && nrow(mm) > ncol(mm)) break
-    if (!length(use_cov)) { log_msg(cfg, label, ': not enough replicates for any test - skipped'); return(NULL) }
-    log_msg(cfg, label, ': dropping covariate ', tail(use_cov, 1), ' (not estimable with these replicates)')
-    use_cov <- head(use_cov, -1)
-  }
+  design_check <- choose_de_design(cd, cond, covars, de$covariate_policy)
+  fml <- design_check$formula
+  design_text <- paste(deparse(fml), collapse = '')
+  dropped <- paste(design_check$dropped, collapse = ';')
+  if (!design_check$ok) return(skip(design_check$reason, design_text, dropped))
+  if (nzchar(dropped)) log_msg(cfg, label, ': explicit fallback removed ', dropped)
+  cd <- as.data.frame(cd)
+  rownames(cd) <- cd$replicate_id
 
   dds <- DESeq2::DESeqDataSetFromMatrix(round(pb), as.data.frame(cd), design = fml)
   dds <- DESeq2::DESeq(dds, quiet = TRUE)
+
+  record_status('tested', design = design_text, dropped = dropped)
+  pseudobulks[[label]] <<- list(counts = pb, normalized_counts = DESeq2::counts(dds, normalized = TRUE),
+                               samples = cd, design = design_text)
 
   # Within-stratum direction (e.g. per donor) from CPM, for the consistency rule
   cpm <- t(t(pb) / colSums(pb)) * 1e6
@@ -78,14 +106,31 @@ run_deseq <- function(cells, label) {
   out <- map_dfr(setdiff(levels(cd[[cond]]), ref_level), function(lv) {
     res <- DESeq2::results(dds, contrast = c(cond, lv, ref_level)) |> as.data.frame() |> rownames_to_column('gene') |> as_tibble()
     # Direction of the effect in each stratum that has both conditions
-    dirs <- map(levels(strata), function(s) {
+    expected <- if (length(covars)) sort(unique(as.character(sample_tbl[[covars[1]]]))) else character()
+    effects <- map_dfr(levels(strata), function(s) {
       a <- cd[[cond]] == lv & strata == s; b <- cd[[cond]] == ref_level & strata == s
       if (!any(a) || !any(b)) return(NULL)
-      sign(log2(rowMeans(cpm[, a, drop = FALSE]) + 1) - log2(rowMeans(cpm[, b, drop = FALSE]) + 1))
-    }) |> compact()
-    consistent <- if (length(dirs)) Reduce(`&`, map(dirs, \(d) d[res$gene] == sign(res$log2FoldChange))) else NA
-    res |> mutate(contrast = paste(lv, 'vs', ref_level), consistent_across_strata = consistent,
-                  n_strata_compared = length(dirs), design = deparse(fml), subset = label, .before = 1)
+      tibble(subset = label, contrast = paste(lv, 'vs', ref_level), stratum = s,
+             gene = rownames(pb), n_reference = sum(b), n_comparison = sum(a),
+             # Descriptive CPM effect, not a donor-specific inferential test.
+             log2_cpm_effect = log2(rowMeans(cpm[, a, drop = FALSE]) + 1) -
+                               log2(rowMeans(cpm[, b, drop = FALSE]) + 1))
+    })
+    if (nrow(effects)) donor_rows[[paste(label, lv, sep = '/')]] <<- effects
+    dirs <- if (nrow(effects)) map(split(effects, effects$stratum),
+      \(x) sign(x$log2_cpm_effect[match(res$gene, x$gene)])) else list()
+    evidence <- strata_evidence(dirs, res$log2FoldChange, length(expected), de$min_strata)
+    # With no requested stratum there is no independent replication check.
+    if (!length(covars)) {
+      evidence$consistent[] <- NA
+      evidence$support <- 'no_stratification'
+    }
+    res |> mutate(contrast = paste(lv, 'vs', ref_level),
+                  consistent_across_strata = evidence$consistent,
+                  direction_agrees_available = evidence$available,
+                  n_strata_compared = if (length(covars)) length(dirs) else 0L,
+                  n_strata_expected = length(expected), strata_support = evidence$support,
+                  dropped_covariates = dropped, design = design_text, subset = label, .before = 1)
   })
   out
 }
@@ -100,12 +145,18 @@ if (isTRUE(de$by_cluster)) {
     results_all[[paste0('cluster_', cl)]] <- run_deseq(cells, paste0('cluster_', cl))
   }
 }
-res_tbl <- bind_rows(results_all)
+res_tbl <- bind_rows(c(list(empty_results), results_all))
+write_csv(bind_rows(status_rows), tab_path(cfg, 'pseudobulk_de_status.csv'))
+write_csv(bind_rows(sample_rows), tab_path(cfg, 'pseudobulk_sample_eligibility.csv'))
+effect_template <- tibble(subset = character(), contrast = character(), stratum = character(),
+                         gene = character(), n_reference = integer(), n_comparison = integer(), log2_cpm_effect = double())
+write_csv(bind_rows(c(list(effect_template), donor_rows)), tab_path(cfg, 'pseudobulk_stratum_effects.csv.gz'))
+saveRDS(pseudobulks, rds_path(cfg, '06_pseudobulk_de'))
 write_csv(res_tbl, tab_path(cfg, 'pseudobulk_de_results.csv.gz'))
 
 # ---- Summary: significant genes per subset ----
 summary_tbl <- res_tbl |>
-  group_by(subset, contrast, design) |>
+  group_by(subset, contrast, design, dropped_covariates, n_strata_compared, n_strata_expected, strata_support) |>
   summarise(genes_tested = n(),
             sig_padj05     = sum(padj < 0.05, na.rm = TRUE),
             sig_and_consistent = sum(padj < 0.05 & consistent_across_strata, na.rm = TRUE),
@@ -115,7 +166,7 @@ print(summary_tbl, n = Inf, width = Inf)
 write_csv(summary_tbl, tab_path(cfg, 'pseudobulk_de_summary.csv'))
 
 # ---- Volcano: whole tissue ----
-if (!is.null(results_all$all_bins)) {
+if (!is.null(results_all$all_bins) && any(!is.na(results_all$all_bins$padj))) {
   vdf <- results_all$all_bins |>
     filter(!is.na(padj)) |>
     mutate(class = case_when(padj < 0.05 & consistent_across_strata ~ 'padj < 0.05, consistent',
@@ -130,6 +181,10 @@ if (!is.null(results_all$all_bins)) {
     theme_classic()
   ggsave(fig_path(cfg, 'volcano_all_bins.pdf'), p_v, width = 8, height = 6)
   ggsave(fig_path(cfg, 'volcano_all_bins.png'), p_v, width = 8, height = 6, dpi = 100)
+} else {
+  # A skipped rerun must not leave a volcano from an earlier successful run.
+  unlink(c(fig_path(cfg, 'volcano_all_bins.pdf'), fig_path(cfg, 'volcano_all_bins.png')))
+  log_msg(cfg, 'No testable whole-tissue results with adjusted p-values; volcano omitted')
 }
 
 step_finish(cfg)
