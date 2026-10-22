@@ -26,7 +26,8 @@ default_config <- list(
   qc = list(                              # each value: one number for all resolutions, or a map
     min_counts   = 50,                    #   per resolution, e.g. {"8": 50, "16": 100, cells: 50}
     min_features = 0,                     # min genes per bin/cell
-    max_mt_pct   = 50                     # max mitochondrial %; 100 disables
+    max_mt_pct   = 50,                    # max mitochondrial %; 100 disables
+    report = list(sample_col = 'library_id', group_cols = NULL, max_rows = 100)
   ),
   clustering = list(
     n_variable_features = 2000,
@@ -163,6 +164,11 @@ validate_config <- function(cfg) {
       errs <- c(errs, 'rctd$force_recompute must be true or false')
   }
 
+  if (!is.character(cfg$qc$report$sample_col) || length(cfg$qc$report$sample_col) != 1 || is.na(cfg$qc$report$sample_col) || !nzchar(cfg$qc$report$sample_col))
+    errs <- c(errs,'qc$report$sample_col must name one sample-sheet column')
+  if (!is.numeric(cfg$qc$report$max_rows) || length(cfg$qc$report$max_rows) != 1 ||
+      !is.finite(cfg$qc$report$max_rows) || cfg$qc$report$max_rows < 1 || cfg$qc$report$max_rows %% 1 != 0)
+    errs <- c(errs,'qc$report$max_rows must be a positive integer')
   # Sample sheet columns and Space Ranger folders
   if (!is.null(cfg$sample_sheet) && file.exists(cfg$sample_sheet)) {
     ss <- utils::read.csv(cfg$sample_sheet, check.names = FALSE)
@@ -191,6 +197,10 @@ validate_config <- function(cfg) {
       if (cfg$de$condition_col %in% unlist(cfg$de$covariates))
         errs <- c(errs, 'de$condition_col cannot also be a covariate')
     }
+    qc_cols <- unique(c(cfg$qc$report$sample_col, unlist(cfg$qc$report$group_cols)))
+    if (length(setdiff(qc_cols,colnames(ss)))) errs <- c(errs,paste('QC reporting columns missing:',paste(setdiff(qc_cols,colnames(ss)),collapse=', ')))
+    if (length(cfg$qc$report$sample_col) == 1 && !is.na(cfg$qc$report$sample_col) && cfg$qc$report$sample_col %in% colnames(ss) && any(is.na(ss[[cfg$qc$report$sample_col]]) | trimws(as.character(ss[[cfg$qc$report$sample_col]])) == ''))
+      errs <- c(errs,'QC sample identifiers must not be missing')
     if (cfg$clustering$integration == 'harmony' && !cfg$clustering$integration_by %in% colnames(ss))
       errs <- c(errs, paste('clustering$integration_by not in sample_sheet:', cfg$clustering$integration_by))
   }
@@ -529,3 +539,5 @@ rctd_reference_inputs <- function(ref_obj, assay, celltype_col) {
 # ---- Output modules ----
 .pipeline_dir <- normalizePath(file.path(dirname(sys.frame(1)$ofile), '..'))
 source(file.path(.pipeline_dir, 'R', 'outputs.R'))
+
+source(file.path(.pipeline_dir, 'R', 'qc_reports.R'))

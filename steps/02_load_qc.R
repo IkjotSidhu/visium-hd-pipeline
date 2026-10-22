@@ -51,6 +51,7 @@ load_cells <- function(sr_dir, lib) {
 }
 
 # ---- Load each capture area ----
+loading_rows <- list()
 obj_list <- map(set_names(unique(sheet$library_id)), function(lib) {
   lib_rows <- sheet |> filter(library_id == lib)
   sr_dir   <- lib_rows$spaceranger_dir[1]
@@ -67,6 +68,7 @@ obj_list <- map(set_names(unique(sheet$library_id)), function(lib) {
   }
   n_before <- ncol(obj)
   keep <- !is.na(rep_id)
+  n_assigned <- sum(keep)
 
   # Test mode: keep a random fraction of each replicate
   if (!is.null(cfg$test_fraction)) {
@@ -75,6 +77,8 @@ obj_list <- map(set_names(unique(sheet$library_id)), function(lib) {
     keep <- seq_along(rep_id) %in% sel
     log_msg(cfg, lib, ': test mode - keeping ', round(100 * cfg$test_fraction), '% of each replicate')
   }
+  loading_rows[[lib]] <<- tibble(library_id = lib,n_loaded = n_before,n_assigned = n_assigned,
+                                n_unassigned = n_before-n_assigned,n_selected = sum(keep))
   obj <- subset(obj, cells = colnames(obj)[keep])
   rep_id <- rep_id[keep]
   log_msg(cfg, lib, ': ', ncol(obj), ' of ', n_before, ' ', unit_label, ' assigned to a replicate')
@@ -95,7 +99,7 @@ count_col <- paste0('nCount_', assay)
 feat_col  <- paste0('nFeature_', assay)
 
 # ---- QC table + removal report ----
-qc_df <- map_dfr(obj_list, \(o) o[[]]) |>
+qc_df <- map_dfr(obj_list, \(o) o[[]] |> rownames_to_column('barcode')) |>
   mutate(pass = .data[[count_col]] >= min_counts & .data[[feat_col]] >= min_features &
                 replace_na(percent.mt, 0) <= max_mt_pct)
 
@@ -112,6 +116,11 @@ qc_summary <- qc_df |>
             .groups = 'drop')
 print(qc_summary, width = Inf)
 write_csv(qc_summary, tab_path(cfg, 'qc_summary.csv'))
+
+write_csv(qc_df |> mutate(unit_id = paste(library_id,barcode,sep = '_'), .before = 1),
+          tab_path(cfg,'qc_unit_metrics.csv.gz'))
+reports <- build_qc_reports(qc_df,sheet,cfg,count_col,feat_col,bind_rows(loading_rows))
+write_qc_reports(reports,cfg)
 
 # Flag uneven loss between conditions (biases composition comparisons)
 if (cfg$de$condition_col %in% colnames(qc_df)) {

@@ -35,6 +35,10 @@ qc:
   min_counts: 50                # min UMIs per bin/cell
   min_features: 0               # min genes per bin/cell
   max_mt_pct: 50                # removes only extreme bins; 100 = no MT filter
+  report:
+    sample_col: library_id      # use your sample ID column, e.g. visium_sample_id
+    group_cols: null           # auto: available condition, donor, tissue; or an explicit list
+    max_rows: 100               # visible rows per HTML table; CSVs include every row
 
 clustering:
   n_variable_features: 2000
