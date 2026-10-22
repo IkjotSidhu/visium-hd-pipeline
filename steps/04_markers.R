@@ -12,6 +12,7 @@ cfg      <- step_setup('04_markers')
 mk       <- cfg$markers
 obj      <- read_step_rds(cfg, '03_cluster')
 main_col <- paste0('cluster_res_', cfg$clustering$main_resolution)
+cfg$clustering_key <- clustering_key(obj, main_col)
 
 # ---- Sketch subset with joined layers ----
 # Seurat v5: markers need a single counts/data layer
