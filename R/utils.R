@@ -37,6 +37,10 @@ default_config <- list(
     integration         = 'auto',         # auto (Harmony when >1 donor/sample) | harmony | none
     integration_by      = 'donor'         # sample-sheet column Harmony corrects for (auto falls back to replicate_id)
   ),
+  annotation = list(run = TRUE, mapping_files = list(), require_complete = FALSE),
+  pathways = list(run = TRUE, gmt_file = NULL, collection = NULL, version = NULL,
+                  gene_id_type = 'symbol', min_size = 15, max_size = 500, eps = 1e-10),
+  report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
   banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = c(0.5, 1), pca_dims = 30),
   de = list(
@@ -48,6 +52,8 @@ default_config <- list(
     min_bins       = 50,                  # pseudobulk sample needs >= this many bins to be used
     covariate_policy = 'strict',          # strict skips unsupported designs; drop explicitly permits fallback
     min_strata     = 2,                   # minimum paired strata for the consistency flag
+    diagnostics = list(run = TRUE, top_variable_genes = 500,
+                       metadata_cols = c('donor', 'condition', 'tissue', 'region', 'library_id')),
     interpretation_notes = list()         # study-specific limits copied alongside results
   ),
   rctd = list(
@@ -71,7 +77,10 @@ default_config <- list(
       '04_markers'           = list(cores = 4, mem_mb = 16000,  walltime = '06:00'),
       '05_banksy'            = list(cores = 2, mem_mb = 64000,  walltime = '12:00'),
       '06_pseudobulk_de'     = list(cores = 1, mem_mb = 64000,  walltime = '04:00'),
-      '07_rctd'              = list(cores = 4, mem_mb = 75000,  walltime = '48:00')
+      '07_rctd'              = list(cores = 4, mem_mb = 75000,  walltime = '48:00'),
+      '08_annotation'        = list(cores = 1, mem_mb = 16000, walltime = '02:00'),
+      '09_pathways'          = list(cores = 1, mem_mb = 16000, walltime = '02:00'),
+      '10_report'            = list(cores = 1, mem_mb = 8000, walltime = '01:00')
     )
   )
 )
@@ -100,6 +109,8 @@ load_config <- function(config_path, bin_size = NULL) {
   cfg$sample_sheet          <- resolve(cfg$sample_sheet)
   cfg$replicates$manual_dir <- resolve(cfg$replicates$manual_dir)
   cfg$rctd$reference_rds    <- resolve(cfg$rctd$reference_rds)
+  cfg$annotation$mapping_files <- lapply(cfg$annotation$mapping_files, resolve)
+  cfg$pathways$gmt_file <- resolve(cfg$pathways$gmt_file)
 
   # Resolution label used in file names and output folders
   cfg$res_label <- if (cfg$bin_size == 'cells') 'cells' else sprintf('%03dum', as.integer(cfg$bin_size))
@@ -174,6 +185,20 @@ validate_config <- function(cfg) {
     if (cfg$clustering$integration == 'harmony' && !cfg$clustering$integration_by %in% colnames(ss))
       errs <- c(errs, paste('clustering$integration_by not in sample_sheet:', cfg$clustering$integration_by))
   }
+  for (p in unlist(cfg$annotation$mapping_files))
+    if (!file.exists(p)) errs <- c(errs, paste('annotation mapping not found:', p))
+  if (!is.null(cfg$pathways$gmt_file)) {
+    if (!file.exists(cfg$pathways$gmt_file)) errs <- c(errs, 'pathways$gmt_file not found')
+    for (key in c('collection', 'version', 'gene_id_type'))
+      if (!is.character(cfg$pathways[[key]]) || length(cfg$pathways[[key]]) != 1 || !nzchar(cfg$pathways[[key]]))
+        errs <- c(errs, paste0('pathways$', key, ' is required with a GMT file'))
+  }
+  positive_integer <- function(x) is.numeric(x) && length(x) == 1 && is.finite(x) && x >= 1 && x %% 1 == 0
+  for (x in list(cfg$pathways$min_size, cfg$pathways$max_size, cfg$de$diagnostics$top_variable_genes, cfg$report$max_table_rows))
+    if (!positive_integer(x)) errs <- c(errs, 'Pathway sizes, PCA gene count and report row limit must be positive integers')
+  if (cfg$pathways$min_size > cfg$pathways$max_size) errs <- c(errs, 'pathways min_size exceeds max_size')
+  if (!is.numeric(cfg$pathways$eps) || length(cfg$pathways$eps) != 1 || !is.finite(cfg$pathways$eps) || cfg$pathways$eps < 0)
+    errs <- c(errs, 'pathways$eps must be nonnegative')
   if (length(errs)) stop('Config problems:\n  - ', paste(errs, collapse = '\n  - '), call. = FALSE)
   invisible(TRUE)
 }
@@ -210,7 +235,7 @@ qc_value <- function(cfg, key) {
 step_setup <- function(step) {
   args <- commandArgs(trailingOnly = TRUE)
   if (length(args) < 1) stop('Usage: Rscript steps/', step, '.R <config.yaml> [8|16|cells]', call. = FALSE)
-  cfg <- load_config(args[1], bin_size = if (length(args) > 1) args[2] else NULL)
+  cfg <- load_config(args[1], bin_size = if (length(args) > 1 && step != '10_report') args[2] else NULL)
 
   # Project R library (compiled against the Rocky9 R/4.4.1 module)
   if (!is.null(cfg$r_library)) .libPaths(c(cfg$r_library, .libPaths()))
@@ -228,6 +253,11 @@ step_setup <- function(step) {
   if (n_cores > 1) future::plan('multicore', workers = n_cores) else future::plan('sequential')
   options(future.globals.maxSize = 64 * 1024^3, future.seed = TRUE)
 
+  cfg$pipeline_dir <- .pipeline_dir
+  git_value <- function(arguments) tryCatch(paste(system2('git', c('-C', shQuote(.pipeline_dir), arguments),
+      stdout = TRUE, stderr = FALSE), collapse = '\n'), error = function(e) 'unavailable')
+  cfg$pipeline_commit <- git_value(c('rev-parse', 'HEAD'))
+  cfg$pipeline_worktree <- if (nzchar(git_value(c('status', '--porcelain')))) 'modified' else 'clean'
   cfg$step       <- step
   cfg$n_cores    <- n_cores
   cfg$step_dir   <- step_dir(cfg, step)
@@ -250,15 +280,17 @@ log_msg <- function(cfg, ...) message(format(Sys.time(), '%H:%M:%S'), ' [', cfg$
 
 # ---- Job plan for run_pipeline.sh ----
 # One line per job: step res cores mem_mb walltime queue project logdir.
-# Step 01 runs once; 02-07 once per resolution; switched-off steps are skipped.
-plan_jobs <- function(cfg, first = '01', last = '07', res_filter = '') {
-  steps <- c('01_assign_replicates', '02_load_qc', '03_cluster', '04_markers', '05_banksy', '06_pseudobulk_de', '07_rctd')
-  keep  <- c(layout_splits(cfg), TRUE, TRUE, TRUE, isTRUE(cfg$banksy$run), isTRUE(cfg$de$run), isTRUE(cfg$rctd$run))
+# Steps 01 and 10 run once; 02-09 run per resolution; disabled steps are skipped.
+plan_jobs <- function(cfg, first = '01', last = '10', res_filter = '') {
+  steps <- c('01_assign_replicates', '02_load_qc', '03_cluster', '04_markers', '05_banksy', '06_pseudobulk_de', '07_rctd', '08_annotation', '09_pathways', '10_report')
+  keep  <- c(layout_splits(cfg), TRUE, TRUE, TRUE, isTRUE(cfg$banksy$run), isTRUE(cfg$de$run), isTRUE(cfg$rctd$run),
+             isTRUE(cfg$annotation$run), isTRUE(cfg$pathways$run) && isTRUE(cfg$de$run), isTRUE(cfg$report$run))
   num   <- as.integer(substr(steps, 1, 2))
   steps <- steps[keep & num >= as.integer(first) & num <= as.integer(last)]
 
   res <- as.character(unlist(cfg$bin_sizes))
   if (nzchar(res_filter)) res <- intersect(res, strsplit(res_filter, ',')[[1]])
+  if (!length(res)) stop('No configured resolutions match the requested resolution filter')
 
   logdir <- file.path(cfg$output_dir, 'logs')
   line <- function(step, r) {
@@ -266,13 +298,14 @@ plan_jobs <- function(cfg, first = '01', last = '07', res_filter = '') {
     paste(step, r, rs$cores, rs$mem_mb, rs$walltime, cfg$lsf$queue, cfg$lsf$project, logdir)
   }
   c(if ('01_assign_replicates' %in% steps) line('01_assign_replicates', res[1]),
-    unlist(lapply(res, \(r) vapply(setdiff(steps, '01_assign_replicates'), line, character(1), r = r))))
+    unlist(lapply(res, \(r) vapply(setdiff(steps, c('01_assign_replicates', '10_report')), line, character(1), r = r))),
+    if ('10_report' %in% steps && length(res)) line('10_report', 'all'))
 }
 
 # ---- Paths ----
 # Replicate assignment is shared by every resolution; everything else is per resolution
 step_dir <- function(cfg, step) {
-  if (step == '01_assign_replicates') file.path(cfg$output_dir, step) else file.path(cfg$output_dir, cfg$res_label, step)
+  if (step %in% c('01_assign_replicates', '10_report')) file.path(cfg$output_dir, step) else file.path(cfg$output_dir, cfg$res_label, step)
 }
 rds_dir  <- function(cfg) file.path(cfg$output_dir, cfg$res_label, 'rds')
 rds_path <- function(cfg, step) file.path(rds_dir(cfg), paste0(step, '.rds'))
@@ -477,3 +510,7 @@ rctd_reference_inputs <- function(ref_obj, assay, celltype_col) {
   list(counts = as(counts, 'dgCMatrix'),
        types = as.character(ref_obj[[]][colnames(counts), celltype_col]))
 }
+
+# ---- Output modules ----
+.pipeline_dir <- normalizePath(file.path(dirname(sys.frame(1)$ofile), '..'))
+source(file.path(.pipeline_dir, 'R', 'outputs.R'))

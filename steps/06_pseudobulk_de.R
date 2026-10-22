@@ -34,6 +34,7 @@ log_msg(cfg, 'Testing ', cond, ' vs reference "', ref_level, '"', if (length(cov
 log_msg(cfg, 'Replicates per condition: ', paste(names(table(sample_tbl[[cond]])), table(sample_tbl[[cond]]), sep = '=', collapse = ', '))
 
 counts_all <- LayerData(obj, assay = assay, layer = 'counts')
+diagnostic_rows <- list()
 status_rows <- list(); sample_rows <- list(); donor_rows <- list(); pseudobulks <- list()
 # Stable schema: all-skipped runs still produce readable, header-only results.
 empty_results <- tibble(subset = character(), contrast = character(), design = character(),
@@ -99,6 +100,19 @@ run_deseq <- function(cells, label) {
   pseudobulks[[label]] <<- list(counts = pb, normalized_counts = DESeq2::counts(dds, normalized = TRUE),
                                samples = cd, design = design_text)
 
+  if (isTRUE(de$diagnostics$run)) {
+    md_cols <- unique(c('replicate_id', cond, covars, de$diagnostics$metadata_cols))
+    diagnostic_md <- obj[[]] |> select(any_of(md_cols)) |> distinct()
+    diagnostic_status <- tryCatch({
+      write_pseudobulk_diagnostics(dds, diagnostic_md, cfg, label)
+      tibble(subset = label, status = 'complete', reason = '')
+    }, error = function(e) {
+      log_msg(cfg, label, ': diagnostics failed: ', conditionMessage(e))
+      tibble(subset = label, status = 'failed', reason = conditionMessage(e))
+    })
+    diagnostic_rows[[label]] <<- diagnostic_status
+  }
+
   # Within-stratum direction (e.g. per donor) from CPM, for the consistency rule
   cpm <- t(t(pb) / colSums(pb)) * 1e6
   strata <- if (length(covars)) cd[[covars[1]]] else factor(rep('all', nrow(cd)))
@@ -146,6 +160,8 @@ if (isTRUE(de$by_cluster)) {
   }
 }
 res_tbl <- bind_rows(c(list(empty_results), results_all))
+diagnostic_template <- tibble(subset = character(), status = character(), reason = character())
+write_csv(bind_rows(c(list(diagnostic_template), diagnostic_rows)), tab_path(cfg, 'pseudobulk_diagnostics_status.csv'))
 write_csv(bind_rows(status_rows), tab_path(cfg, 'pseudobulk_de_status.csv'))
 write_csv(bind_rows(sample_rows), tab_path(cfg, 'pseudobulk_sample_eligibility.csv'))
 effect_template <- tibble(subset = character(), contrast = character(), stratum = character(),

@@ -45,6 +45,14 @@ clustering:
   integration: auto             # auto = Harmony whenever there is more than one donor (or sample) | harmony | none
   integration_by: donor         # sample-sheet column to correct for; without it, auto corrects by replicate_id
 
+# Step 08 writes a fingerprinted annotation_template.csv for each resolution.
+# Fill broad_type, cell_state, confidence and marker/histology evidence, then
+# configure reviewed files. Missing labels remain explicitly Unannotated.
+annotation:
+  run: true
+  mapping_files: {}             # e.g. {"8": metadata/annotations_8.csv, cells: metadata/annotations_cells.csv}
+  require_complete: false      # true fails if any cluster lacks a reviewed broad type
+
 markers:
   top_n: 10
   min_pct: 0.1
@@ -66,6 +74,27 @@ de:                             # pseudobulk DESeq2, replicate = unit of replica
   covariate_policy: strict       # skip unsupported adjustment; drop explicitly permits an unadjusted fallback
   min_strata: 2                 # consistency requires ALL expected strata and at least this many
   interpretation_notes: []      # study-specific limits written next to the DE results
+  diagnostics:
+    run: true
+    top_variable_genes: 500     # VST PCA; sample distances use all retained genes
+    metadata_cols: [donor, condition, tissue, region, library_id]
+
+# Step 09: signed Wald-statistic enrichment, with explicit versioned gene sets.
+# Without a GMT file the stage writes a skipped status and empty result tables.
+pathways:
+  run: true
+  gmt_file: null                # gene symbols/IDs must match the DE gene column
+  collection: null             # e.g. Reactome human pathways
+  version: null                # required when supplying a GMT, e.g. "97"
+  gene_id_type: symbol         # recorded; no automatic ID conversion
+  min_size: 15                 # overlap with finite-statistic genes, not raw GMT size
+  max_size: 500
+  eps: 1.0e-10
+
+# Step 10: one static output/index.html after all selected resolution chains.
+report:
+  run: true
+  max_table_rows: 20
 
 rctd:
   run: false
