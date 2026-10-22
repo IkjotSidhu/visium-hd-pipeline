@@ -6,13 +6,15 @@ source(file.path(dirname(sub('^--file=', '', grep('^--file=', commandArgs(FALSE)
 cfg <- step_setup('08_annotation')
 obj <- read_step_rds(cfg, '03_cluster')
 sheet <- read_sample_sheet(cfg)
-column <- paste0('cluster_res_', cfg$clustering$main_resolution)
+assert_cluster_resolutions(obj, cfg$clustering$resolutions)
+run_annotation <- function(cfg) {
+column <- cluster_column(cfg$cluster_resolution)
 key <- clustering_key(obj, column)
 cfg$clustering_key <- key
 clusters <- sort_levels(obj[[column]][, 1])
 template <- read_annotation_map(NULL, clusters, key)
 write_csv(template, tab_path(cfg, 'annotation_template.csv'))
-path <- cfg$annotation$mapping_files[[cfg$bin_size]]
+path <- annotation_mapping(cfg)
 cfg$annotation_mapping_md5 <- if (!is.null(path)) unname(tools::md5sum(path)) else NULL
 annotation <- read_annotation_map(path, clusters, key) |>
   mutate(annotation_status = if_else(!is.na(broad_type) & nzchar(trimws(broad_type)), 'reviewed', 'unannotated'),
@@ -55,10 +57,13 @@ if ('Unannotated' %in% names(palette)) palette['Unannotated'] <- 'grey70'
 p <- ggplot(composition, aes(replicate_id, fraction, fill = broad_type)) + geom_col() +
   scale_fill_manual(values = palette) + theme_classic() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(title = paste('Annotated unit composition:', cfg$res_label),
+  labs(title = paste('Annotated unit composition:', cfg$res_label, 'resolution', resolution_label(cfg$cluster_resolution)),
        subtitle = 'Denominator: QC-retained bins/cells; unannotated units retained',
        x = NULL, y = 'Fraction of retained units', fill = 'Broad type')
 ggsave(fig_path(cfg, 'annotation_composition.png'), p, width = 10, height = 7, dpi = 100)
 ggsave(fig_path(cfg, 'annotation_composition.pdf'), p, width = 10, height = 7)
-save_plot_list(plot_spatial(md, 'broad_type', cfg, sheet, palette = palette), cfg, 'spatial_broad_type')
+save_plot_list(plot_spatial(md, 'broad_type', cfg, sheet, palette = palette, title_prefix = paste('Resolution', resolution_label(cfg$cluster_resolution))), cfg, 'spatial_broad_type')
+step_finish(cfg)
+}
+for (r in cfg$clustering$resolutions) run_annotation(resolution_cfg(cfg, r))
 step_finish(cfg)

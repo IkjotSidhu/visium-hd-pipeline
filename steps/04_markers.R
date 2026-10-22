@@ -11,27 +11,49 @@ source(file.path(dirname(sub('^--file=', '', grep('^--file=', commandArgs(FALSE)
 cfg      <- step_setup('04_markers')
 mk       <- cfg$markers
 obj      <- read_step_rds(cfg, '03_cluster')
-main_col <- paste0('cluster_res_', cfg$clustering$main_resolution)
-cfg$clustering_key <- clustering_key(obj, main_col)
+assert_cluster_resolutions(obj, cfg$clustering$resolutions)
+keys <- setNames(lapply(cfg$clustering$resolutions, function(r) clustering_key(obj, cluster_column(r))),
+                 vapply(cfg$clustering$resolutions, resolution_label, character(1)))
 
 # ---- Sketch subset with joined layers ----
 # Seurat v5: markers need a single counts/data layer
 sk <- subset(obj, cells = colnames(obj[['sketch']]))
 DefaultAssay(sk) <- 'sketch'
 sk[['sketch']] <- JoinLayers(sk[['sketch']])
-Idents(sk) <- main_col
 rm(obj); gc()
+sk_base <- sk
+run_markers <- function(cfg) {
+  sk <- sk_base
+  main_col <- cluster_column(cfg$cluster_resolution)
+  cfg$clustering_key <- keys[[resolution_label(cfg$cluster_resolution)]]
+  Idents(sk) <- main_col
 log_msg(cfg, 'Markers on ', ncol(sk), ' sketched units, ', nlevels(Idents(sk)), ' clusters (', main_col, ')')
 
 # ---- Find markers (Wilcoxon; Seurat uses presto when installed) ----
-markers <- FindAllMarkers(sk, only.pos = TRUE, min.pct = mk$min_pct, logfc.threshold = mk$logfc_threshold, verbose = FALSE) |>
-  as_tibble() |>
-  arrange(cluster, p_val_adj, desc(avg_log2FC))
+markers <- if (nlevels(Idents(sk)) > 1) FindAllMarkers(sk, only.pos = TRUE, min.pct = mk$min_pct,
+  logfc.threshold = mk$logfc_threshold, verbose = FALSE) |> as_tibble() else tibble()
+if (!nrow(markers)) markers <- tibble(cluster = character(), gene = character(), p_val_adj = double(), avg_log2FC = double())
+markers <- markers |> arrange(cluster, p_val_adj, desc(avg_log2FC))
 write_csv(markers, tab_path(cfg, paste0('markers_', main_col, '.csv')))
 
 top <- markers |> filter(p_val_adj < 0.05) |> group_by(cluster) |> slice_max(avg_log2FC, n = mk$top_n, with_ties = FALSE) |> ungroup()
 write_csv(top, tab_path(cfg, paste0('top', mk$top_n, '_markers_', main_col, '.csv')))
 log_msg(cfg, nrow(markers), ' markers; ', n_distinct(top$cluster), ' clusters with significant markers')
+
+if (!nrow(top)) {
+  # A low resolution can contain a single cluster. Keep a visible explanatory
+  # plot in its gallery instead of failing or leaving a figure from an old run.
+  empty <- ggplot() + annotate('text', x = 0, y = 0, label = 'No significant positive markers available') +
+    theme_void() + labs(title = paste('Markers — resolution', resolution_label(cfg$cluster_resolution)))
+  for (stem in c(paste0('dotplot_top3_', main_col), paste0('heatmap_top', mk$top_n, '_', main_col))) {
+    ggsave(fig_path(cfg, paste0(stem, '.png')), empty, width = 8, height = 6, dpi = 100)
+    ggsave(fig_path(cfg, paste0(stem, '.pdf')), empty, width = 8, height = 6)
+  }
+  write_csv(tibble(status = 'no_markers', n_clusters = nlevels(Idents(sk))), tab_path(cfg, 'marker_status.csv'))
+  step_finish(cfg)
+  return(invisible(NULL))
+}
+write_csv(tibble(status = 'complete', n_clusters = nlevels(Idents(sk))), tab_path(cfg, 'marker_status.csv'))
 
 # ---- Dot plot: top 3 per cluster ----
 dot_genes <- top |> group_by(cluster) |> slice_head(n = 3) |> pull(gene) |> unique()
@@ -68,4 +90,7 @@ h <- max(6, length(gene_order) * 0.07)
 ggsave(fig_path(cfg, paste0('heatmap_top', mk$top_n, '_', main_col, '.pdf')), p_heat, width = 9, height = h, limitsize = FALSE)
 ggsave(fig_path(cfg, paste0('heatmap_top', mk$top_n, '_', main_col, '.png')), p_heat, width = 9, height = h, dpi = 100, limitsize = FALSE)
 
+step_finish(cfg)
+}
+for (r in cfg$clustering$resolutions) run_markers(resolution_cfg(cfg, r))
 step_finish(cfg)

@@ -53,8 +53,11 @@ md <- obj[[]] |> rownames_to_column('cell') |> select(cell, library_id, replicat
   left_join(labels, by = 'cell')
 for (col in setdiff(colnames(labels), 'cell')) {
   md[[col]] <- as.character(md[[col]])
-  save_plot_list(plot_spatial(md, col, cfg, sheet, palette = make_palette(sort_levels(md[[col]]))),
-                 cfg, paste0('spatial_', col), width = 10, height = 9)
+  r <- as.numeric(sub('.*_res_', '', col))
+  current <- resolution_cfg(cfg, r)
+  write_csv(md |> select(cell, library_id, replicate_id, all_of(col)), tab_path(current, paste0(col, '.csv.gz')))
+  save_plot_list(plot_spatial(md, col, current, sheet, palette = make_palette(sort_levels(md[[col]]))),
+                 current, paste0('spatial_', col), width = 10, height = 9)
 }
 
 step_finish(cfg)

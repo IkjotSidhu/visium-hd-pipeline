@@ -91,8 +91,8 @@ sketch_md <- obj[[]][colnames(obj[['sketch']]), ]
 p_tree <- clustree::clustree(sketch_md, prefix = 'sketch_snn_res.') +
   ggraph::scale_edge_colour_gradientn(colours = c('grey80', 'black'), guide = 'none') +
   ggraph::scale_edge_alpha(guide = 'none')
-ggsave(fig_path(cfg, 'clustree.pdf'), p_tree, width = 10, height = 10)
-ggsave(fig_path(cfg, 'clustree.png'), p_tree, width = 10, height = 10, dpi = 100)
+ggsave(fig_path(cfg, 'clustree.pdf'), p_tree, width = 10, height = max(10, 0.65 * length(cl$resolutions)))
+ggsave(fig_path(cfg, 'clustree.png'), p_tree, width = 10, height = max(10, 0.65 * length(cl$resolutions)), dpi = 100)
 
 # ---- UMAPs (all bins/cells, rasterised) ----
 md <- obj[[]] |> mutate(umap_1 = Embeddings(obj, umap_full)[, 1], umap_2 = Embeddings(obj, umap_full)[, 2])
@@ -110,40 +110,45 @@ umap_plot <- function(col, label = FALSE) {
   }
   p
 }
+# Metadata views and clustree are shared; every clustering gets its own gallery.
 meta_cols <- intersect(c('replicate_id', 'donor', cfg$de$condition_col, 'library_id'), colnames(md))
-umaps <- c(map(set_names(paste0('cluster_res_', cl$resolutions)), \(c) umap_plot(c, label = TRUE)),
-           map(set_names(meta_cols), umap_plot))
-save_plot_list(umaps, cfg, 'umap', width = 9, height = 8)
+save_plot_list(map(set_names(meta_cols), umap_plot), cfg, 'umap_metadata', width = 9, height = 8)
+summary_rows <- list()
+for (r in cl$resolutions) {
+  current <- resolution_cfg(cfg, r)
+  column <- cluster_column(r)
+  log_msg(cfg, 'Writing plots for clustering resolution ', resolution_label(r))
+  save_plot_list(list(clusters = umap_plot(column, label = TRUE)), current, 'umap', width = 9, height = 8)
+  write_csv(md |> rownames_to_column('cell') |> select(cell, replicate_id, library_id, all_of(column)),
+            tab_path(current, 'cluster_labels.csv.gz'))
 
-# ---- Composition: how each cluster splits across replicates / donors ----
-# A cluster made almost entirely of one donor/replicate hints at a batch effect
-# (or real biology unique to that sample) - compare with/without integration
-comp <- md |> count(cluster = .data[[main_col]], replicate_id) |>
-  group_by(cluster) |> mutate(frac = n / sum(n)) |> ungroup()
-write_csv(md |> count(replicate_id, cluster = .data[[main_col]]) |>
-            group_by(replicate_id) |> mutate(pct_of_replicate = round(100 * n / sum(n), 2)),
-          tab_path(cfg, paste0('cluster_composition_', main_col, '.csv')))
-p_comp <- ggplot(comp, aes(cluster, frac, fill = replicate_id)) +
-  geom_col() +
-  scale_fill_manual(values = make_palette(sheet$replicate_id)) +
-  labs(title = paste('Replicate make-up of each cluster -', main_col), x = 'Cluster', y = 'Fraction of units') +
-  theme_classic()
-ggsave(fig_path(cfg, 'cluster_by_replicate.pdf'), p_comp, width = 12, height = 5)
-ggsave(fig_path(cfg, 'cluster_by_replicate.png'), p_comp, width = 12, height = 5, dpi = 100)
-
-if ('donor' %in% colnames(md)) {
-  donor_mix <- md |> count(cluster = .data[[main_col]], donor) |>
-    group_by(cluster) |> summarise(max_donor_frac = round(max(n) / sum(n), 3), n = sum(n)) |>   # frac before n is overwritten
-    arrange(desc(max_donor_frac))
-  write_csv(donor_mix, tab_path(cfg, 'donor_mixing_per_cluster.csv'))
-  n_single <- sum(donor_mix$max_donor_frac > 0.95)
-  log_msg(cfg, n_single, ' of ', nrow(donor_mix), ' clusters are >95% from one donor (see donor_mixing_per_cluster.csv)')
+  comp <- md |> count(cluster = .data[[column]], replicate_id) |>
+    group_by(cluster) |> mutate(frac = n / sum(n)) |> ungroup()
+  write_csv(md |> count(replicate_id, cluster = .data[[column]]) |>
+    group_by(replicate_id) |> mutate(pct_of_replicate = round(100 * n / sum(n), 2)) |> ungroup(),
+    tab_path(current, 'cluster_composition.csv'))
+  p_comp <- ggplot(comp, aes(cluster, frac, fill = replicate_id)) + geom_col() +
+    scale_fill_manual(values = make_palette(sheet$replicate_id)) +
+    labs(title = paste('Replicate make-up of clusters — resolution', resolution_label(r)),
+         x = 'Cluster', y = 'Fraction of units') + theme_classic()
+  ggsave(fig_path(current, 'cluster_by_replicate.pdf'), p_comp, width = 12, height = 5)
+  ggsave(fig_path(current, 'cluster_by_replicate.png'), p_comp, width = 12, height = 5, dpi = 100)
+  n_single <- NA_integer_
+  if ('donor' %in% colnames(md)) {
+    donor_mix <- md |> count(cluster = .data[[column]], donor) |>
+      group_by(cluster) |> summarise(max_donor_frac = round(max(n) / sum(n), 3), n = sum(n)) |>
+      arrange(desc(max_donor_frac))
+    write_csv(donor_mix, tab_path(current, 'donor_mixing_per_cluster.csv'))
+    n_single <- sum(donor_mix$max_donor_frac > 0.95)
+  }
+  md_sp <- md |> mutate(across(all_of(column), as.character))
+  save_plot_list(plot_spatial(md_sp, column, current, sheet,
+      palette = make_palette(levels(obj[[column]][, 1])), title_prefix = paste('Resolution', resolution_label(r))),
+    current, 'spatial_clusters', width = 10, height = 9)
+  summary_rows[[resolution_label(r)]] <- tibble(clustering_resolution = r,
+    n_clusters = nlevels(obj[[column]][, 1]), n_units = nrow(md), clusters_gt95pct_one_donor = n_single,
+    folder = paste0('res_', resolution_label(r)))
+  step_finish(current)
 }
-
-# ---- Spatial cluster maps (hires) ----
-md_sp <- md |> mutate(across(all_of(main_col), as.character))
-pal_main <- make_palette(levels(obj[[main_col]][, 1]))
-save_plot_list(plot_spatial(md_sp, main_col, cfg, sheet, palette = pal_main), cfg, paste0('spatial_', main_col),
-               width = 10, height = 9)
-
+write_csv(bind_rows(summary_rows), tab_path(cfg, 'clustering_resolution_summary.csv'))
 step_finish(cfg)

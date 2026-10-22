@@ -78,7 +78,8 @@ if (is.null(settings$gmt_file)) {
   }
 }
 results_tbl <- bind_rows(results) |> mutate(cluster = sub('^cluster_', '', subset))
-annotation_file <- file.path(step_dir(cfg, '08_annotation'), 'tables', 'cluster_annotations.csv')
+annotation_cfg <- cfg; annotation_cfg$cluster_resolution <- cfg$clustering$main_resolution
+annotation_file <- file.path(step_dir(annotation_cfg, '08_annotation'), 'tables', 'cluster_annotations.csv')
 if (file.exists(annotation_file)) {
   labels <- read_csv(annotation_file, col_types = cols(cluster = col_character()), show_col_types = FALSE) |>
     select(cluster, broad_type)
