@@ -118,3 +118,27 @@ html_table <- function(tbl, max_rows = 20L) {
   paste0('<div class="table-scroll"><table><thead><tr>', header, '</tr></thead><tbody>',
          paste(rows, collapse = ''), '</tbody></table></div><p>Showing ', nrow(shown), ' of ', nrow(tbl), ' rows.</p>')
 }
+
+# ---- Clustering-resolution output contexts ----
+# Bin sizes (8/16/cells) and clustering resolutions are separate dimensions.
+resolution_label <- function(resolution) format(as.numeric(resolution), scientific = FALSE, trim = TRUE, nsmall = 1, digits = 12)
+cluster_column <- function(resolution) paste0('cluster_res_', format(as.numeric(resolution), scientific = FALSE, trim = TRUE, digits = 12))
+resolution_cfg <- function(cfg, resolution, create = TRUE) {
+  cfg$cluster_resolution <- as.numeric(resolution)
+  cfg$step_dir <- step_dir(cfg, cfg$step)
+  if (create) for (name in c('figures', 'tables')) dir.create(file.path(cfg$step_dir, name), recursive = TRUE, showWarnings = FALSE)
+  cfg
+}
+assert_cluster_resolutions <- function(obj, resolutions) {
+  columns <- vapply(as.numeric(unlist(resolutions)), cluster_column, character(1))
+  missing <- setdiff(columns, colnames(obj[[]]))
+  if (length(missing)) stop('Clustering columns missing: ', paste(missing, collapse = ', '), '; rerun step 03 with the requested resolution sweep')
+  invisible(TRUE)
+}
+annotation_mapping <- function(cfg) {
+  entry <- cfg$annotation$mapping_files[[cfg$bin_size]]
+  resolution <- cfg$cluster_resolution %||% cfg$clustering$main_resolution
+  if (is.list(entry)) return(entry[[resolution_label(resolution)]] %||% entry[[as.character(resolution)]])
+  # A legacy single-file mapping belongs only to the primary resolution.
+  if (isTRUE(all.equal(as.numeric(resolution), as.numeric(cfg$clustering$main_resolution)))) entry else NULL
+}

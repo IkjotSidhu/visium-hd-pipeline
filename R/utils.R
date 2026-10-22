@@ -32,7 +32,7 @@ default_config <- list(
     n_variable_features = 2000,
     sketch_cells        = 25000,          # cells sketched PER LAYER (= per sample/integration group)
     pca_dims            = 30,
-    resolutions         = c(0.2, 0.5, 1, 2),
+    resolutions         = (1:20) / 10,
     main_resolution     = 1,
     integration         = 'auto',         # auto (Harmony when >1 donor/sample) | harmony | none
     integration_by      = 'donor'         # sample-sheet column Harmony corrects for (auto falls back to replicate_id)
@@ -42,7 +42,7 @@ default_config <- list(
                   gene_id_type = 'symbol', min_size = 15, max_size = 500, eps = 1e-10),
   report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
-  banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = c(0.5, 1), pca_dims = 30),
+  banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = (1:20) / 10, pca_dims = 30),
   de = list(
     run            = TRUE,
     condition_col  = 'condition',
@@ -93,6 +93,9 @@ load_config <- function(config_path, bin_size = NULL) {
   user_cfg <- yaml::read_yaml(config_path)
   cfg <- utils::modifyList(default_config, user_cfg, keep.null = TRUE)
 
+  cfg$clustering$resolutions <- unlist(cfg$clustering$resolutions)
+  cfg$banksy$resolutions <- unlist(cfg$banksy$resolutions)
+
   # The resolution this step runs at (passed by run_pipeline.sh); defaults to the first listed
   cfg$bin_size <- as.character(bin_size %||% cfg$bin_sizes[[1]])
 
@@ -109,7 +112,8 @@ load_config <- function(config_path, bin_size = NULL) {
   cfg$sample_sheet          <- resolve(cfg$sample_sheet)
   cfg$replicates$manual_dir <- resolve(cfg$replicates$manual_dir)
   cfg$rctd$reference_rds    <- resolve(cfg$rctd$reference_rds)
-  cfg$annotation$mapping_files <- lapply(cfg$annotation$mapping_files, resolve)
+  resolve_mapping <- function(x) if (is.list(x)) lapply(x, resolve_mapping) else resolve(x)
+  cfg$annotation$mapping_files <- resolve_mapping(cfg$annotation$mapping_files)
   cfg$pathways$gmt_file <- resolve(cfg$pathways$gmt_file)
 
   # Resolution label used in file names and output folders
@@ -132,6 +136,11 @@ validate_config <- function(cfg) {
     errs <- c(errs, 'replicates$layout must be none, left_to_right, top_to_bottom or manual')
   if (cfg$replicates$layout == 'manual' && (is.null(cfg$replicates$manual_dir) || !dir.exists(cfg$replicates$manual_dir)))
     errs <- c(errs, 'replicates$manual_dir must exist when layout = manual')
+  for (res in list(cfg$clustering$resolutions, cfg$banksy$resolutions)) {
+    values <- unlist(res)
+    if (!is.numeric(values) || !length(values) || any(!is.finite(values) | values <= 0) || anyDuplicated(values))
+      errs <- c(errs, 'Clustering/BANKSY resolutions must be unique positive finite numbers')
+  }
   if (!cfg$clustering$main_resolution %in% cfg$clustering$resolutions)
     errs <- c(errs, 'clustering$main_resolution must be one of clustering$resolutions')
   if (!cfg$clustering$integration %in% c('auto', 'harmony', 'none'))
@@ -305,10 +314,16 @@ plan_jobs <- function(cfg, first = '01', last = '10', res_filter = '') {
 # ---- Paths ----
 # Replicate assignment is shared by every resolution; everything else is per resolution
 step_dir <- function(cfg, step) {
-  if (step %in% c('01_assign_replicates', '10_report')) file.path(cfg$output_dir, step) else file.path(cfg$output_dir, cfg$res_label, step)
+  root <- if (step %in% c('01_assign_replicates', '10_report')) file.path(cfg$output_dir, step) else file.path(cfg$output_dir, cfg$res_label, step)
+  if (!is.null(cfg$cluster_resolution) && step %in% c('03_cluster', '04_markers', '05_banksy', '08_annotation'))
+    root <- file.path(root, paste0('res_', resolution_label(cfg$cluster_resolution)))
+  root
 }
 rds_dir  <- function(cfg) file.path(cfg$output_dir, cfg$res_label, 'rds')
-rds_path <- function(cfg, step) file.path(rds_dir(cfg), paste0(step, '.rds'))
+rds_path <- function(cfg, step) {
+  suffix <- if (step == '08_annotation' && !is.null(cfg$cluster_resolution)) paste0('_res_', resolution_label(cfg$cluster_resolution)) else ''
+  file.path(rds_dir(cfg), paste0(step, suffix, '.rds'))
+}
 fig_path <- function(cfg, file) file.path(cfg$step_dir, 'figures', file)
 tab_path <- function(cfg, file) file.path(cfg$step_dir, 'tables', file)
 
