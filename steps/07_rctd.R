@@ -25,11 +25,11 @@ sanitize_label <- function(x) {
   x |> iconv(to = 'ASCII//TRANSLIT') |> str_replace_all('/', '-') |> str_squish() |> str_replace_all(' ', '_')
 }
 ref_obj <- readRDS(rc$reference_rds)
-ref_assay <- DefaultAssay(ref_obj)
-ref_obj[[ref_assay]] <- JoinLayers(ref_obj[[ref_assay]])
-ref_counts <- LayerData(ref_obj, assay = ref_assay, layer = 'counts')
-ref_counts <- as(round(ref_counts), 'dgCMatrix')                  # merged/SCT objects can hold non-integers
-ref_types  <- sanitize_label(as.character(ref_obj[[rc$celltype_col]][, 1]))
+ref_assay <- rc$reference_assay
+ref_input <- rctd_reference_inputs(ref_obj, ref_assay, rc$celltype_col)
+ref_counts <- ref_input$counts
+ref_types <- sanitize_label(ref_input$types)
+rm(ref_input)
 names(ref_types) <- colnames(ref_counts)
 
 # Drop rare and unlabelled types
@@ -37,7 +37,12 @@ type_n <- table(ref_types)
 drop   <- names(type_n)[type_n < rc$min_cells_type | names(type_n) %in% c('', 'NA', 'Unknown')]
 if (length(drop)) log_msg(cfg, 'Dropping reference types: ', paste(drop, collapse = ', '))
 keep <- !ref_types %in% drop & !is.na(ref_types)
+if (nlevels(factor(ref_types[keep])) < 2) stop('RCTD needs at least two retained reference types')
+reference_key <- digest::digest(list(counts = ref_counts[, keep], types = ref_types[keep],
+                                    assay = ref_assay, min_cells_type = rc$min_cells_type), algo = 'sha256')
 reference <- Reference(ref_counts[, keep], factor(ref_types[keep]), colSums(ref_counts[, keep]))
+write_csv(tibble(cell = colnames(ref_counts), type = ref_types, retained = keep),
+          tab_path(cfg, 'rctd_reference_cells.csv.gz'))
 rm(ref_obj, ref_counts); gc()
 log_msg(cfg, 'Reference: ', sum(keep), ' cells, ', nlevels(factor(ref_types[keep])), ' types')
 
@@ -47,21 +52,35 @@ assay <- DefaultAssay(obj)
 counts_all <- LayerData(obj, assay = assay, layer = 'counts')
 
 # ---- RCTD per replicate (cached) ----
-weights_list <- list(); first_type <- list()
+weights_list <- list(); first_type <- list(); cache_rows <- list()
+cache_settings <- list(mode = rc$mode, umi_min = rc$umi_min, seed = cfg$seed,
+                       max_cores = rc$max_cores,
+                       spacexr = as.character(packageVersion('spacexr')),
+                       Seurat = as.character(packageVersion('Seurat')))
 for (rep_id in unique(obj$replicate_id)) {
+  # Hash the actual effective inputs, not file names or modification times.
+  cells <- colnames(obj)[obj$replicate_id == rep_id]
+  coords <- data.frame(x = obj$x_fullres[cells], y = obj$y_fullres[cells], row.names = cells)
+  if (any(!is.finite(as.matrix(coords)))) stop(rep_id, ': non-finite spatial coordinates')
+  spatial_counts <- counts_all[, cells, drop = FALSE]
+  validate_raw_counts(spatial_counts, rep_id)
   cache <- file.path(cache_dir, paste0(rep_id, '.rds'))
-  if (file.exists(cache)) {
-    log_msg(cfg, rep_id, ': using cached RCTD result')
-    rctd <- readRDS(cache)
+  key <- rctd_cache_key(reference_key, spatial_counts, coords, cache_settings)
+  rctd <- read_rctd_cache(cache, key, rc$force_recompute)
+  reused <- !is.null(rctd)
+  if (reused) {
+    log_msg(cfg, rep_id, ': using validated cached RCTD result')
   } else {
-    log_msg(cfg, rep_id, ': running RCTD (', rc$mode, ' mode)')
-    cells  <- colnames(obj)[obj$replicate_id == rep_id]
-    coords <- data.frame(x = obj$x_fullres[cells], y = obj$y_fullres[cells], row.names = cells)
-    puck   <- SpatialRNA(coords, counts_all[, cells], colSums(counts_all[, cells]))
-    rctd   <- create.RCTD(puck, reference, max_cores = rc$max_cores, UMI_min = rc$umi_min)
-    rctd   <- run.RCTD(rctd, doublet_mode = rc$mode)
-    saveRDS(rctd, cache)
+    log_msg(cfg, rep_id, ': running RCTD (', rc$mode, ' mode; missing/stale/forced cache)')
+    # Per-replicate seed makes cache misses independent of earlier cache hits.
+    set.seed(cfg$seed)
+    puck <- SpatialRNA(coords, spatial_counts, colSums(spatial_counts))
+    rctd <- create.RCTD(puck, reference, max_cores = rc$max_cores, UMI_min = rc$umi_min)
+    rctd <- run.RCTD(rctd, doublet_mode = rc$mode)
+    write_rctd_cache(rctd, cache, key)
   }
+  cache_rows[[rep_id]] <- tibble(replicate_id = rep_id, cache_reused = reused, cache_key = key,
+                                reference_key = reference_key, n_input_units = length(cells))
   # Per-bin type weights (rows sum to 1) and RCTD's first-choice type
   w <- as.matrix(normalize_weights(rctd@results$weights))
   weights_list[[rep_id]] <- w
@@ -80,7 +99,10 @@ dominant <- weights |>
   pivot_longer(all_of(types), names_to = 'type', values_to = 'w') |>
   slice_max(w, n = 1, with_ties = FALSE, by = cell) |>
   transmute(cell, rctd_dominant_type = type, rctd_dominant_weight = w)
-rctd_tbl <- weights |> left_join(dominant, by = 'cell') |> left_join(bind_rows(first_type), by = 'cell')
+first_template <- tibble(cell = character(), rctd_first_type = character(), rctd_spot_class = character())
+rctd_tbl <- weights |> left_join(dominant, by = 'cell') |>
+  left_join(bind_rows(c(list(first_template), first_type)), by = 'cell')
+write_csv(bind_rows(cache_rows), tab_path(cfg, 'rctd_cache_manifest.csv'))
 write_csv(rctd_tbl, tab_path(cfg, 'rctd_weights.csv.gz'))
 saveRDS(rctd_tbl, rds_path(cfg, '07_rctd'))
 log_msg(cfg, nrow(rctd_tbl), ' of ', ncol(obj), ' units deconvolved (others below UMI_min = ', rc$umi_min, ')')
