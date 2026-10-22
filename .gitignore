@@ -1,5 +1,5 @@
-# Excluded: colleague's first-pass script from another project
-pk_wound_healing_visiumHD_analysis_first_pass.Rmd
+# Pipeline outputs if run inside the repo
+output/
 
 # R / RStudio
 .Rhistory

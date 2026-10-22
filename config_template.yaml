@@ -1,0 +1,85 @@
+# =============================================================================
+# Visium HD pipeline config. Copy into your project, edit, then run:
+#   bash /path/to/visium-hd-pipeline/run_pipeline.sh config.yaml
+# Relative paths are relative to THIS file. Keys you leave out use the
+# defaults in R/utils.R (default_config).
+# =============================================================================
+
+project_name: My_VisiumHD_project
+output_dir: output              # results: output/<01_assign_replicates | 008um | 016um | cells>/<step>/
+seed: 1234
+species: human                  # human (MT-) or mouse (mt-)
+
+# Resolutions to analyse; each gets its own output folder and job chain
+bin_sizes: [8, 16, cells]       # "cells" = Space Ranger 4 nucleus-expanded segmentation
+
+# Sample sheet: one row per replicate. Required columns:
+#   replicate_id     unique name (used in every table/plot)
+#   library_id       Space Ranger run / capture area the replicate is on
+#   spaceranger_dir  that run's outs folder (contains binned_outputs/)
+# Any other columns (donor, condition, tissue, ...) are carried onto every bin/cell.
+sample_sheet: metadata/sample_sheet.csv
+
+# Several replicates on one capture area?
+replicates:
+  layout: none                  # none | left_to_right | top_to_bottom | manual
+  # left_to_right / top_to_bottom: tissue pieces are detected automatically and
+  #   matched to the library's sample-sheet rows IN ORDER. Check the overlay in
+  #   output/01_assign_replicates/figures before going further.
+  # manual: <manual_dir>/<library_id>.csv with columns barcode (8 um) + replicate_id
+  manual_dir: null
+
+# QC: a single value for every resolution, or a per-resolution map, e.g.
+#   min_counts: {"8": 50, "16": 100, cells: 50}
+qc:
+  min_counts: 50                # min UMIs per bin/cell
+  min_features: 0               # min genes per bin/cell
+  max_mt_pct: 50                # removes only extreme bins; 100 = no MT filter
+
+clustering:
+  n_variable_features: 2000
+  sketch_cells: 25000           # sketched per sample (per integration group with harmony)
+  pca_dims: 30
+  resolutions: [0.2, 0.5, 1, 2]
+  main_resolution: 1            # used for markers, DE by cluster and composition
+  integration: auto             # auto = Harmony whenever there is more than one donor (or sample) | harmony | none
+  integration_by: donor         # sample-sheet column to correct for; without it, auto corrects by replicate_id
+
+markers:
+  top_n: 10
+  min_pct: 0.1
+  logfc_threshold: 0.25
+
+banksy:
+  run: true
+  lambda: [0.2]                 # 0.2 ~ cell-type-like, 0.8 ~ tissue domains; list several to compare
+  k_geom: [15]
+  resolutions: [0.5, 1]
+
+de:                             # pseudobulk DESeq2, replicate = unit of replication
+  run: true
+  condition_col: condition      # sample-sheet column to compare
+  reference: null               # reference level (default: first alphabetically)
+  covariates: []                # e.g. [donor] for a paired design
+  by_cluster: true              # also test within each main_resolution cluster
+  min_bins: 50                  # a replicate needs this many bins/cells in a subset to be used
+
+rctd:
+  run: false
+  reference_rds: null           # Seurat object of a tissue-matched single-cell reference
+  celltype_col: null            # its cell-type column
+  min_cells_type: 25
+  umi_min: 50
+  mode: doublet                 # doublet | full | multi
+  max_cores: 4
+
+plots:
+  image_alpha: 0.4              # H&E dimming under spatial plots (0 = hidden, 1 = full)
+
+# LSF (Minerva). Resources per step: cores, memory PER CORE (MB), walltime.
+# Defaults suit ~100k 8 um bins; raise for bigger datasets.
+lsf:
+  project: acc_naiklab
+  queue: premium
+  # resources:
+  #   03_cluster: {cores: 4, mem_mb: 32000, walltime: "12:00"}

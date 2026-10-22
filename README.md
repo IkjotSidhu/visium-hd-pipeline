@@ -1,334 +1,182 @@
 # Visium HD Analysis Pipeline
 
-A comprehensive, generalizable workflow for analyzing Visium HD spatial transcriptomics data, derived from the wound healing analysis template.
+Takes 10x Visium HD Space Ranger 4 output from raw counts to QC, clusters, markers,
+spatial domains and condition comparisons — for **8 µm bins, 16 µm bins and segmented
+cells** in one run. Capture areas that hold several tissue pieces (e.g. replicates or
+conditions side by side) are split automatically.
 
-## Overview
+Runs on Minerva as a chain of LSF jobs. One config file, one command.
 
-This pipeline provides a standardized approach to analyze Visium HD data with the following features:
+---
 
-- **Modular Design**: Easy to customize for different experimental designs
-- **Quality Control**: Comprehensive QC metrics and filtering
-- **Multiple Clustering Approaches**: Standard clustering + BANKSY spatial clustering
-- **Scalable**: Handles large datasets using sketching approaches
-- **Reproducible**: Parameterized configuration system
-- **Comprehensive Output**: Plots, tables, and analysis reports
+## Quick start
 
-## Files in this Pipeline
+**1. Make a sample sheet** — a CSV with one row per tissue piece:
 
-### Core Files
-- `General_VisiumHD_Analysis_Workflow.Rmd` - Main analysis workflow (R Markdown)
-- `config_visium_hd.R` - Configuration file with all parameters
-- `run_visium_hd_analysis.R` - Pipeline launcher and utility functions
-- `submit_template.sh` - LSF/`bsub` job template (Minerva) with the required module + BLAS-thread environment (see FAQ)
-- `renv.lock` - Pinned R package versions (R 4.4.1, Bioconductor 3.20) for a reproducible `renv::restore()`
-- `README.md` - This file
+| replicate_id | library_id | spaceranger_dir | donor | condition |
+|---|---|---|---|---|
+| D1_Control | Run1 | data/Run1 | D1 | Control |
+| D1_Treated | Run1 | data/Run1 | D1 | Treated |
+| D2_Control | Run2 | data/Run2 | D2 | Control |
+| D2_Treated | Run2 | data/Run2 | D2 | Treated |
 
-### Template Files
-- `pk_wound_healing_visiumHD_analysis_first_pass.Rmd` - Original template script
+- `replicate_id` — a unique name for the piece
+- `library_id` — the Space Ranger run (capture area) the piece is on
+- `spaceranger_dir` — that run's output folder (the one containing `binned_outputs/`)
+- Add any other columns you want carried onto every bin/cell (`donor`, `condition`, `tissue`, ...)
 
-> **New here? Read the [FAQ](FAQ.md) first.** It captures the non-obvious HPC, deconvolution, and statistical gotchas that cost real debugging time on actual Visium HD projects.
-
-## Quick Start
-
-### 1. Basic Setup
+**2. Copy and edit the config:**
 
 ```bash
-# Clone or download the pipeline files to your working directory
-# Ensure your data is organized as follows:
-data/
-├── raw/
-│   ├── SAMPLE1/
-│   │   ├── filtered_feature_bc_matrix.h5
-│   │   ├── spatial/
-│   │   │   ├── tissue_positions.csv
-│   │   │   ├── scalefactors_json.json
-│   │   │   └── tissue_hires_image.png
-│   │   └── cloupe_csvs/ (optional, for splitting samples)
-│   └── SAMPLE2/
-│       └── ... (same structure)
+cp /path/to/visium-hd-pipeline/config_template.yaml config.yaml
 ```
 
-### 2. Configure Your Analysis
+At minimum set `sample_sheet`, and — if several pieces share a capture area —
+`replicates: layout: left_to_right` (pieces listed in the sheet in the order they sit on
+the slide). Every option is explained in the template.
 
-Edit `config_visium_hd.R` to match your dataset:
+**3. Run it:**
 
-```r
-# Update these key parameters:
-PROJECT_NAME <- "Your_Project_Name"
-SAMPLE_NAMES <- c("SAMPLE1", "SAMPLE2", "SAMPLE3")
-DATA_BASE_DIR <- "data/raw/"
-
-# Adjust QC thresholds as needed:
-MIN_COUNTS <- 50        # Minimum UMI counts per spot
-MAX_MT_PERCENT <- 20    # Maximum mitochondrial gene percentage
-
-# Set species:
-SPECIES <- "mouse"      # or "human"
-```
-
-### 3. Run the Analysis
-
-#### Option A: Interactive R Session
-```r
-source("run_visium_hd_analysis.R")
-run_analysis()
-```
-
-#### Option B: Command Line
 ```bash
-Rscript run_visium_hd_analysis.R
+bash /path/to/visium-hd-pipeline/run_pipeline.sh config.yaml
 ```
 
-#### Option C: Custom Configuration
+Results appear in `output/`. Follow the jobs with `bjobs`; logs are in `output/logs/`.
+
+---
+
+## Check these first
+
+| Look at | To check |
+|---|---|
+| `output/01_assign_replicates/figures/replicate_assignment_*.png` | Each tissue piece got the right replicate name |
+| `output/008um/02_load_qc/tables/qc_summary.csv` | How many bins each replicate kept, and why bins were removed |
+| `output/008um/03_cluster/figures/umap_donor.png` | Donors mix after batch correction |
+| `output/008um/03_cluster/figures/spatial_cluster_res_*.png` | Clusters on the H&E |
+| `output/008um/04_markers/tables/top10_markers_*.csv` | Marker genes for naming clusters |
+
+The same folders exist for `016um/` and `cells/`.
+
+---
+
+## Common tasks
+
+**Try a new dataset quickly** — run on 10% of each replicate, written to `output_test/`:
 ```bash
-Rscript run_visium_hd_analysis.R config_mouse_wound_healing.R
+bash run_pipeline.sh config.yaml -t 0.1
 ```
 
-## Detailed Usage
-
-### Configuration Options
-
-The `config_visium_hd.R` file contains all customizable parameters:
-
-#### Dataset Parameters
-```r
-SAMPLE_NAMES <- c("CONTROL", "TREATMENT")     # Your sample names
-DATA_BASE_DIR <- "data/raw/"                  # Path to data
-BIN_SIZE <- c(2)                             # Analysis resolution (μm)
+**Preview the jobs without submitting:**
+```bash
+bash run_pipeline.sh config.yaml -n
 ```
 
-#### Quality Control
-```r
-MIN_COUNTS <- 50          # Minimum UMI counts per spot
-MAX_MT_PERCENT <- 20      # Maximum mitochondrial percentage
-MIN_FEATURES <- 10        # Minimum features per spot
+**Rerun from a given step** (earlier results are reused):
+```bash
+bash run_pipeline.sh config.yaml -s 03-07        # steps 03 to 07
+bash run_pipeline.sh config.yaml -s 04-04        # just step 04
 ```
 
-#### Analysis Parameters
-```r
-SKETCH_NCELLS <- 50000                    # Cells for sketching
-CLUSTER_RESOLUTIONS <- c(0.2, 0.5, 1, 2) # Clustering resolutions
-N_VARIABLE_FEATURES <- 5000               # Variable features to identify
+**Run only some resolutions:**
+```bash
+bash run_pipeline.sh config.yaml -r 8            # 8 µm only
+bash run_pipeline.sh config.yaml -r 16,cells
 ```
 
-#### Spatial Analysis (BANKSY)
-```r
-BANKSY_LAMBDA <- c(0.2, 0.8)  # Balance expression vs spatial info
-BANKSY_K <- c(15, 20)         # Number of spatial neighbors
+**Run one step interactively:**
+```bash
+module purge && module load R/4.4.1
+Rscript /path/to/visium-hd-pipeline/steps/03_cluster.R config.yaml 8
 ```
 
-### Example Configurations
-
-Generate example configs for common use cases:
-
-```r
-source("run_visium_hd_analysis.R")
-create_example_configs()
+**Change QC thresholds** — in the config; one value for all resolutions or one per resolution:
+```yaml
+qc:
+  min_counts: {"8": 50, "16": 100, cells: 50}
+  max_mt_pct: 50
 ```
 
-This creates:
-- `config_mouse_wound_healing.R` - Time course wound healing
-- `config_human_tumor.R` - Tumor heterogeneity analysis  
-- `config_development.R` - Developmental biology
+**Batch correction** — Harmony runs automatically when the sample sheet has more than one
+donor (or, without a `donor` column, more than one sample). To correct for a different
+column, or to switch it off, set and rerun from step 03:
+```yaml
+clustering:
+  integration_by: batch          # any sample-sheet column
+  integration: none              # disable
+```
 
-### Output Structure
+**Compare conditions** — pseudobulk per replicate, optionally paired by donor:
+```yaml
+de:
+  run: true
+  condition_col: condition
+  reference: Control
+  covariates: [donor]
+```
+
+**Deconvolve with a single-cell reference (RCTD):**
+```yaml
+rctd:
+  run: true
+  reference_rds: /path/to/reference_seurat.rds
+  celltype_col: cell_type
+```
+
+**Split tissue pieces by hand** (irregular layouts) — export one CSV per capture area
+from Loupe Browser with columns `barcode` (8 µm) and `replicate_id`, save them as
+`<library_id>.csv` in one folder, and set:
+```yaml
+replicates:
+  layout: manual
+  manual_dir: replicate_labels/
+```
+
+**Give a step more memory or time:**
+```yaml
+lsf:
+  resources:
+    03_cluster: {cores: 8, mem_mb: 48000, walltime: "24:00"}
+```
+
+---
+
+## What each step does
+
+| Step | Does | Key outputs |
+|---|---|---|
+| **01** assign replicates | Finds each tissue piece and names it from the sample sheet | Assignment tables, overlay on the H&E |
+| **02** load & QC | Loads bins/cells with the high-resolution H&E, adds sample-sheet columns, filters | QC summary, violin plots, UMI / MT% / pass-fail maps |
+| **03** cluster | Normalises, sketches, clusters at several resolutions, projects to every bin | UMAPs, clustree, cluster make-up per replicate, cluster maps |
+| **04** markers | Marker genes for each cluster | Marker tables, dot plot, heatmap |
+| **05** BANKSY | Spatial domains (expression + neighbourhood) | Domain labels and maps |
+| **06** pseudobulk DE | Condition comparison with replicates as the unit, whole tissue and per cluster | Results table, summary, volcano plot |
+| **07** RCTD | Cell-type proportions from a single-cell reference | Weights, dominant type maps, composition |
+
+Steps 05–07 can be switched off in the config (`run: false`).
+
+## Output layout
 
 ```
 output/
-├── plots/
-│   ├── spatial_qc_plots.pdf
-│   ├── umap_multiple_resolutions.pdf
-│   ├── spatial_clusters_multiple_resolutions.pdf
-│   ├── banksy_clustering_results.pdf
-│   └── top_marker_features.pdf
-├── tables/
-│   ├── markers_resolution_0.5.csv
-│   ├── cluster_composition.csv
-│   └── analysis_summary.json
-├── RDS-files/
-│   ├── merged_object_clustered.RDS
-│   └── final_analysis_object.RDS
-└── reports/
-    └── [PROJECT_NAME]_analysis_report.html
+├── 01_assign_replicates/
+├── 008um/  016um/  cells/        one folder per resolution, each with:
+│   ├── 02_load_qc/  03_cluster/  04_markers/  05_banksy/  06_pseudobulk_de/  07_rctd/
+│   │      └── figures/  tables/  params_used.yaml  sessionInfo.txt
+│   └── rds/                      Seurat objects passed between steps
+└── logs/
 ```
 
-## Advanced Usage
+`params_used.yaml` records the exact settings each step ran with.
 
-### Custom Gene Sets
+---
 
-Add pathway-specific gene sets to your config:
+## Requirements
 
-```r
-CUSTOM_GENE_SETS <- list(
-  "Inflammatory" = c("Il1b", "Tnf", "Il6", "Ccl2"),
-  "Proliferation" = c("Mki67", "Pcna", "Top2a", "Ccnb1"),
-  "ECM" = c("Col1a1", "Col3a1", "Fn1", "Lam1")
-)
-```
+Minerva with the `R/4.4.1` module. The packages are already in the lab R library
+(`r_library` in the config). To rebuild the environment elsewhere:
+`renv::restore()` with the included `renv.lock`.
 
-### Multi-Image Samples
+## More
 
-For samples with multiple capture areas:
-
-```r
-IMAGE_NAMES <- list(
-  "SAMPLE1" = c("REGION_A", "REGION_B"),
-  "SAMPLE2" = c("REGION_C", "REGION_D")
-)
-```
-
-### Memory Management
-
-For large datasets:
-
-```r
-# Increase memory limits
-MAX_MEMORY <- 4*10^12  # 4TB limit
-
-# Reduce sketching size
-SKETCH_NCELLS <- 25000
-
-# Use fewer cores to reduce memory per process
-N_CORES <- 4
-```
-
-### Batch Processing
-
-Process multiple projects:
-
-```bash
-# Process different configurations
-Rscript run_visium_hd_analysis.R config_wound_healing.R
-Rscript run_visium_hd_analysis.R config_tumor.R
-Rscript run_visium_hd_analysis.R config_development.R
-```
-
-## Workflow Steps
-
-The analysis workflow includes:
-
-1. **Data Loading**: Load Visium HD data from 10X format
-2. **Quality Control**: Calculate QC metrics and filter low-quality spots
-3. **Normalization**: Normalize expression data
-4. **Integration**: Merge multiple samples if applicable
-5. **Sketching**: Subsample for efficient analysis of large datasets
-6. **Clustering**: Standard and spatial-aware clustering (BANKSY)
-7. **Visualization**: Generate comprehensive plots and reports
-8. **Marker Analysis**: Identify cluster-specific genes
-9. **Export**: Save results and generate summary report
-
-## Dependencies
-
-### Required R Packages
-- `Seurat` (≥4.0)
-- `ggplot2`
-- `patchwork` 
-- `dplyr`
-- `tidyr`
-- `RColorBrewer`
-- `ggpubr`
-- `jsonlite`
-- `knitr`
-- `rmarkdown`
-
-### Optional Packages
-- `Banksy` (for spatial clustering)
-- `SeuratWrappers`
-
-### Installation
-
-```r
-# Install required packages
-install.packages(c("Seurat", "ggplot2", "patchwork", "dplyr", 
-                   "tidyr", "RColorBrewer", "ggpubr", "jsonlite",
-                   "knitr", "rmarkdown"))
-
-# Install BANKSY for spatial analysis
-if (!require("BiocManager", quietly = TRUE))
-    install.packages("BiocManager")
-BiocManager::install("Banksy")
-
-# Install SeuratWrappers
-remotes::install_github("satijalab/seurat-wrappers")
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Memory Errors**
-   ```r
-   # Reduce sketch size or increase memory limit
-   SKETCH_NCELLS <- 25000
-   MAX_MEMORY <- 4*10^12
-   ```
-
-2. **Missing Data Files**
-   ```r
-   # Check dataset integrity
-   source("run_visium_hd_analysis.R")
-   check_dataset()
-   ```
-
-3. **Species-Specific Issues**
-   ```r
-   # Ensure correct species setting
-   SPECIES <- "mouse"  # or "human"
-   ```
-
-4. **BANKSY Installation Issues**
-   - BANKSY is optional - analysis will continue without it
-   - Install using BiocManager as shown above
-
-### Performance Tips
-
-1. **Large Datasets**: Use sketching and reduce resolution count
-2. **Memory Optimization**: Process samples individually then merge
-3. **Speed**: Reduce number of variable features and PCA dimensions
-4. **Storage**: Use compressed RDS files and limit intermediate saves
-
-## FAQ / Lessons Learned
-
-Non-obvious HPC, deconvolution, and statistical gotchas from real Visium HD runs are
-collected in **[FAQ.md](FAQ.md)** — e.g. single-core RCTD segfaults (BLAS threads),
-tissue-specific reference limitations, why an n=2 vs n=2 comparison can't reach
-significance, annotation-label hygiene, and Seurat v5 pitfalls.
-
-## Customization
-
-### Adding New Analysis Steps
-
-1. Modify `General_VisiumHD_Analysis_Workflow.Rmd`
-2. Add parameters to `config_visium_hd.R`
-3. Update validation in `run_visium_hd_analysis.R`
-
-### Custom Visualization
-
-Add custom plotting functions to the workflow or create separate scripts that load the saved RDS objects.
-
-### Integration with Other Tools
-
-The pipeline saves standard Seurat objects that can be used with:
-- Cell2location
-- SPOTlight  
-- RCTD
-- BayesSpace
-- Other spatial analysis tools
-
-## Citation
-
-If you use this pipeline, please cite:
-- The original Seurat paper
-- BANKSY if used for spatial analysis
-- Any other methods incorporated in your analysis
-
-## Contributing
-
-This pipeline was developed for the Naik Lab. For questions or contributions:
-1. Check existing issues and documentation
-2. Submit detailed bug reports or feature requests
-3. Follow coding standards for any contributions
-
-## License
-
-This pipeline is provided as-is for research use. Please respect the licenses of all incorporated tools and methods.
+- [FAQ](FAQ.md) — QC choices, replicate splitting, statistics with few replicates, RCTD and HPC troubleshooting.
+- `config_template.yaml` — every option, with defaults.
