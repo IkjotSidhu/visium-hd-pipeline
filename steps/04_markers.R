@@ -46,7 +46,7 @@ if (!nrow(top)) {
   empty <- ggplot() + annotate('text', x = 0, y = 0, label = 'No significant positive markers available') +
     theme_void() + labs(title = paste('Markers — resolution', resolution_label(cfg$cluster_resolution)))
   for (stem in c(paste0('dotplot_top3_', main_col), paste0('heatmap_top', mk$top_n, '_', main_col))) {
-    ggsave(fig_path(cfg, paste0(stem, '.png')), empty, width = 8, height = 6, dpi = 100)
+    ggsave(fig_path(cfg, paste0(stem, '.png')), empty, width = 8, height = 6, dpi = 100, bg = 'white')
     ggsave(fig_path(cfg, paste0(stem, '.pdf')), empty, width = 8, height = 6)
   }
   write_csv(tibble(status = 'no_markers', n_clusters = nlevels(Idents(sk))), tab_path(cfg, 'marker_status.csv'))
@@ -62,8 +62,8 @@ p_dot <- DotPlot(sk, features = dot_genes, cluster.idents = FALSE) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7)) +
   labs(x = NULL, y = 'Cluster', title = paste('Top 3 markers per cluster -', main_col))
 w <- max(8, length(dot_genes) * 0.18)
-ggsave(fig_path(cfg, paste0('dotplot_top3_', main_col, '.pdf')), p_dot, width = w, height = 7, limitsize = FALSE)
-ggsave(fig_path(cfg, paste0('dotplot_top3_', main_col, '.png')), p_dot, width = w, height = 7, dpi = 100, limitsize = FALSE)
+ggsave(fig_path(cfg, paste0('dotplot_top3_', main_col, '.pdf')), p_dot, width = w, height = 7, limitsize = FALSE, bg = 'white')
+ggsave(fig_path(cfg, paste0('dotplot_top3_', main_col, '.png')), p_dot, width = w, height = 7, dpi = 100, limitsize = FALSE, bg = 'white')
 
 # ---- Heatmap: z-scored mean expression of top-N markers ----
 sk_assay <- DefaultAssay(sk)                                    # resolve at point of use
@@ -87,8 +87,8 @@ p_heat <- ggplot(heat_df, aes(cluster, gene, fill = z)) +
   theme_minimal() +
   theme(axis.text.y = element_text(size = 5), panel.grid = element_blank())
 h <- max(6, length(gene_order) * 0.07)
-ggsave(fig_path(cfg, paste0('heatmap_top', mk$top_n, '_', main_col, '.pdf')), p_heat, width = 9, height = h, limitsize = FALSE)
-ggsave(fig_path(cfg, paste0('heatmap_top', mk$top_n, '_', main_col, '.png')), p_heat, width = 9, height = h, dpi = 100, limitsize = FALSE)
+ggsave(fig_path(cfg, paste0('heatmap_top', mk$top_n, '_', main_col, '.pdf')), p_heat, width = 9, height = h, limitsize = FALSE, bg = 'white')
+ggsave(fig_path(cfg, paste0('heatmap_top', mk$top_n, '_', main_col, '.png')), p_heat, width = 9, height = h, dpi = 100, limitsize = FALSE, bg = 'white')
 
 step_finish(cfg)
 }

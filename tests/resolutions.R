@@ -23,6 +23,10 @@ for (r in c(0.1, 1)) {
   stopifnot(length(list.files(file.path(current$step_dir, 'figures'), pattern = '\\.png$')) == 2,
             length(list.files(file.path(current$step_dir, 'figures'), pattern = '\\.pdf$')) == 2,
             file.exists(file.path(current$step_dir, 'params_used.yaml')))
+  for (path in list.files(file.path(current$step_dir, 'figures'), pattern = '\\.png$', full.names = TRUE)) {
+    img <- png::readPNG(path)
+    stopifnot(all(img[1, 1, 1:3] == 1), dim(img)[3] == 3 || all(img[, , 4] == 1))
+  }
 }
 low <- read_csv(tab_path(resolution_cfg(cfg, 0.1, FALSE), 'marker_status.csv'), show_col_types = FALSE)
 high <- read_csv(tab_path(resolution_cfg(cfg, 1, FALSE), 'marker_status.csv'), show_col_types = FALSE)
