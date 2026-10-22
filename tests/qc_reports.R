@@ -58,3 +58,16 @@ stopifnot(grepl('Bin Metrics Overview',rendered),grepl('full-library totals',ren
  grepl('spaceranger_bins_overview.csv',rendered))
 unlink(source_root,recursive=TRUE)
 cat('Space Ranger overview checks passed\n')
+# Exact linear relationship, constant and empty-after-QC plots.
+root <- tempfile('qc-scatter-');dir.create(root);dir.create(file.path(root,'tables'))
+cfg <- default_config;cfg$step_dir <- root;cfg$bin_size <- 'cells';cfg$qc$report$sample_col <- 'sample'
+fixture <- tibble(sample=c(rep('S1',4),rep('S2',3)),replicate_id=c(rep('R1',4),rep('R2',3)),
+ UMI=c(1:4,rep(2,3)),genes=c(3,5,7,9,rep(3,3)),pass=c(rep(TRUE,4),rep(FALSE,3)))
+fits <- write_qc_relationship_plots(fixture,cfg,'UMI','genes')
+linear <- fits |> filter(level=='sample',id=='S1',stage=='before_qc')
+stopifnot(abs(linear$r_squared-1)<1e-10,abs(linear$slope-2)<1e-10,
+ abs(linear$intercept-1)<1e-10,nrow(fits)==8,
+ all(is.na(fits$r_squared[fits$id %in% c('S2','R2')])),
+ all(file.exists(file.path(root,'figures',fits$png))),all(file.exists(file.path(root,'figures',fits$pdf))))
+unlink(root,recursive=TRUE)
+cat('UMI-gene relationship checks passed\n')

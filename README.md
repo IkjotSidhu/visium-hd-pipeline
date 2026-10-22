@@ -331,3 +331,11 @@ plus sequencing/capture and cell segmentation summaries. These are full-library
 source metrics, including in test mode; they precede replicate assignment and
 pipeline QC. Missing fields remain unavailable. CSVs are exported as
 `spaceranger_{bins,sequencing,cells,status}_overview.csv`.
+
+QC reports include sample- and replicate-specific UMI versus detected-gene
+scatter plots before and after QC, with PNG/PDF exports in `figures/umi_genes/`.
+Each plot shows n and R² from OLS `genes ~ UMI` with an intercept on raw counts.
+Fits use every unit; only displayed points are capped at 20,000. Constant counts
+or fewer than three units produce an explicit unavailable fit. Coefficients,
+R², n and status are saved in `tables/umi_genes_fit_statistics.csv`. R² is a
+relationship diagnostic, not a quality threshold; saturation may be nonlinear.

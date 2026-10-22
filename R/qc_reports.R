@@ -175,6 +175,7 @@ render_qc_sections <- function(reports, table_prefix = 'tables/', max_rows = 100
     '<p>Before QC means assigned units selected for this run. Test sampling and unassigned units are separate from QC failures. Gene metrics count detected genes per unit, not distinct genes across a group.</p>')
   if (!is.null(reports$test_fraction)) out <- c(out, paste0('<p class="notice">Test run: ',100*reports$test_fraction,'% of each replicate was selected before QC. Counts are not full-dataset totals.</p>'))
   out <- c(out, render_spaceranger_overview(reports$spaceranger,table_prefix,max_rows,id_prefix))
+  out <- c(out,render_qc_relationships(reports$relationships,table_prefix))
   for (level in c('group','sample','replicate')) {
     x <- reports[[level]]; keys <- x$keys
     out <- c(out, paste0('<section id="',id(level),'"><h3>',switch(level,group='Groups',sample='Samples',replicate='Replicates'),'</h3>'),
@@ -213,4 +214,67 @@ write_qc_reports <- function(reports, cfg) {
     render_qc_sections(reports,max_rows = cfg$qc$report$max_rows),
     '<p>Raw CSVs retain numeric precision; displayed values are rounded. Post-QC statistics for empty groups are unavailable (—), not zero.</p></body></html>')
   writeLines(document,file.path(cfg$step_dir,'qc_report.html'),useBytes = TRUE)
+}
+
+# Fit every unit; cap only the number of displayed points for readable exports.
+write_qc_relationship_plots <- function(qc_df, cfg, count_col, feature_col) {
+  sample_col <- cfg$qc$report$sample_col
+  dir.create(fig_path(cfg,'umi_genes'),recursive=TRUE,showWarnings=FALSE)
+  results <- list()
+  for (level in c('sample','replicate')) {
+    column <- if (level == 'sample') sample_col else 'replicate_id'
+    groups <- unique(as.character(qc_df[[column]]))
+    for (i in seq_along(groups)) for (stage in c('before_qc','after_qc')) {
+      id <- groups[i]
+      selected <- if (is.na(id)) is.na(qc_df[[column]]) else !is.na(qc_df[[column]]) & qc_df[[column]] == id
+      if (stage == 'after_qc') selected <- selected & qc_df$pass
+      data <- tibble(umi=qc_df[[count_col]][selected],genes=qc_df[[feature_col]][selected])
+      data <- data |> filter(is.finite(umi),is.finite(genes))
+      n_units <- nrow(data)
+      status <- if (n_units < 3) 'Fewer than three units' else if (n_distinct(data$umi)<2 || n_distinct(data$genes)<2) 'Constant UMI or gene counts' else 'ok'
+      fit <- if (status == 'ok') lm(genes ~ umi,data=data) else NULL
+      r2 <- if (is.null(fit)) NA_real_ else summary(fit)$r.squared
+      slope <- if (is.null(fit)) NA_real_ else unname(coef(fit)[2])
+      intercept <- if (is.null(fit)) NA_real_ else unname(coef(fit)[1])
+      # Evenly spaced row indices are deterministic and do not change the RNG.
+      display <- data[unique(round(seq(1,max(1,n_units),length.out=min(n_units,20000)))),,drop=FALSE]
+      label <- if (is.na(id)) '(Missing)' else id
+      subtitle <- paste0(if (stage=='before_qc') 'Before QC' else 'After QC',
+        ' | n = ',format(n_units,big.mark=','),' | R² = ',if (is.na(r2)) 'unavailable' else sprintf('%.3f',r2))
+      caption <- paste0('OLS: detected genes ~ UMI, with intercept; raw counts.\nFit uses all ',n_units,
+        ' units; ',nrow(display),' points displayed.',if (!is.null(cfg$test_fraction)) paste0('\nTest run: ',100*cfg$test_fraction,'% selected before QC.') else '',
+        if (status!='ok') paste0('\n',status,'.') else '')
+      p <- ggplot(display,aes(umi,genes)) + geom_point(size=0.65,alpha=0.22,colour='#225f9c') +
+        labs(title=paste(label,'—',if (cfg$bin_size=='cells') 'cells' else paste0(as.integer(cfg$bin_size),' µm bins')),
+             subtitle=subtitle,x='UMIs per bin/cell',y='Detected genes per bin/cell',caption=caption) +
+        theme_classic(base_size=12) + theme(plot.caption=element_text(hjust=0))
+      if (!is.null(fit)) p <- p + geom_abline(intercept=intercept,slope=slope,colour='#c54627',linewidth=0.8)
+      stem <- paste0('umi_genes/',level,'_',sprintf('%03d',i),'_',stage)
+      for (extension in c('png','pdf')) ggsave(fig_path(cfg,paste0(stem,'.',extension)),p,
+        width=7,height=5.5,dpi=140,bg='white')
+      results[[length(results)+1]] <- tibble(level=level,id=id,stage=stage,n_units=n_units,
+        n_displayed=nrow(display),r_squared=r2,slope=slope,intercept=intercept,status=status,
+        png=paste0(stem,'.png'),pdf=paste0(stem,'.pdf'))
+    }
+  }
+  result <- bind_rows(results)
+  write_csv(result,tab_path(cfg,'umi_genes_fit_statistics.csv'))
+  result
+}
+
+render_qc_relationships <- function(x, table_prefix) {
+  if (is.null(x) || !nrow(x)) return(character())
+  figures <- sub('tables/$','figures/',table_prefix)
+  out <- c('<h3>UMIs versus detected genes</h3>',
+    '<p>Separate sample and replicate plots before and after QC. R² describes an ordinary least-squares fit of detected genes against UMIs on raw counts, with an intercept; it is not a stand-alone quality score. Fits use all units, even when displayed points are capped at 20,000. Gene-count saturation can produce curvature that a straight line does not capture.</p>',
+    paste0('<p><a href="',html_escape(paste0(table_prefix,'umi_genes_fit_statistics.csv')),'">Download fit statistics</a></p>'))
+  for (level in c('sample','replicate')) {
+    out <- c(out,paste0('<details><summary>',if (level=='sample') 'Sample plots' else 'Replicate plots','</summary>'))
+    for (i in which(x$level==level)) out <- c(out,
+      paste0('<h4>',html_escape(paste(x$id[i],x$stage[i])),'</h4><a href="',html_escape(paste0(figures,x$pdf[i])),
+        '">PDF</a><br><img loading="lazy" style="max-width:100%;width:760px" alt="UMIs versus detected genes" src="',
+        html_escape(paste0(figures,x$png[i])),'">'))
+    out <- c(out,'</details>')
+  }
+  out
 }

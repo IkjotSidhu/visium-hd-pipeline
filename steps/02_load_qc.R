@@ -120,6 +120,7 @@ write_csv(qc_summary, tab_path(cfg, 'qc_summary.csv'))
 write_csv(qc_df |> mutate(unit_id = paste(library_id,barcode,sep = '_'), .before = 1),
           tab_path(cfg,'qc_unit_metrics.csv.gz'))
 reports <- build_qc_reports(qc_df,sheet,cfg,count_col,feat_col,bind_rows(loading_rows))
+reports$relationships <- write_qc_relationship_plots(qc_df,cfg,count_col,feat_col)
 write_qc_reports(reports,cfg)
 
 # Flag uneven loss between conditions (biases composition comparisons)
