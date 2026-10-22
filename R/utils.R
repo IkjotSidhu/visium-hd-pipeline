@@ -45,12 +45,17 @@ default_config <- list(
     reference      = NULL,                # reference level of condition_col
     covariates     = list(),              # e.g. donor (paired design)
     by_cluster     = TRUE,                # also test within each cluster at main_resolution
-    min_bins       = 50                   # pseudobulk sample needs >= this many bins to be used
+    min_bins       = 50,                  # pseudobulk sample needs >= this many bins to be used
+    covariate_policy = 'strict',          # strict skips unsupported designs; drop explicitly permits fallback
+    min_strata     = 2,                   # minimum paired strata for the consistency flag
+    interpretation_notes = list()         # study-specific limits copied alongside results
   ),
   rctd = list(
     run            = FALSE,
     reference_rds  = NULL,                # Seurat object of a single-cell reference
     celltype_col   = NULL,                # metadata column with cell-type labels
+    reference_assay = 'RNA',              # raw, uncorrected counts; never inferred from DefaultAssay
+    force_recompute = FALSE,             # bypass even a matching cache
     min_cells_type = 25,                  # drop reference types with fewer cells
     umi_min        = 50,
     mode           = 'doublet',
@@ -123,6 +128,21 @@ validate_config <- function(cfg) {
   if (isTRUE(cfg$rctd$run) && (is.null(cfg$rctd$reference_rds) || !file.exists(cfg$rctd$reference_rds)))
     errs <- c(errs, 'rctd$reference_rds must exist when rctd$run is true')
 
+  if (!cfg$de$covariate_policy %in% c('strict', 'drop'))
+    errs <- c(errs, 'de$covariate_policy must be strict or drop')
+  if (length(cfg$de$min_strata) != 1 || !is.numeric(cfg$de$min_strata) ||
+      !is.finite(cfg$de$min_strata) || cfg$de$min_strata < 2 || cfg$de$min_strata %% 1 != 0)
+    errs <- c(errs, 'de$min_strata must be an integer >= 2')
+  if (isTRUE(cfg$rctd$run)) {
+    for (key in c('celltype_col', 'reference_assay'))
+      if (!is.character(cfg$rctd[[key]]) || length(cfg$rctd[[key]]) != 1 || !nzchar(cfg$rctd[[key]]))
+        errs <- c(errs, paste0('rctd$', key, ' must be a non-empty string'))
+    if (!cfg$rctd$mode %in% c('doublet', 'full', 'multi'))
+      errs <- c(errs, 'rctd$mode must be doublet, full or multi')
+    if (!is.logical(cfg$rctd$force_recompute) || length(cfg$rctd$force_recompute) != 1 || is.na(cfg$rctd$force_recompute))
+      errs <- c(errs, 'rctd$force_recompute must be true or false')
+  }
+
   # Sample sheet columns and Space Ranger folders
   if (!is.null(cfg$sample_sheet) && file.exists(cfg$sample_sheet)) {
     ss <- utils::read.csv(cfg$sample_sheet, check.names = FALSE)
@@ -138,6 +158,19 @@ validate_config <- function(cfg) {
       errs <- c(errs, 'several replicates share a library_id but replicates$layout is none')
     if (isTRUE(cfg$de$run) && !cfg$de$condition_col %in% colnames(ss))
       errs <- c(errs, paste('de$condition_col not in sample_sheet:', cfg$de$condition_col))
+    if (isTRUE(cfg$de$run)) {
+      de_cols <- unique(c(cfg$de$condition_col, unlist(cfg$de$covariates)))
+      missing_de <- setdiff(de_cols, colnames(ss))
+      if (length(missing_de)) errs <- c(errs, paste('DE columns missing:', paste(missing_de, collapse = ', ')))
+      for (v in intersect(de_cols, colnames(ss)))
+        if (any(is.na(ss[[v]]) | trimws(as.character(ss[[v]])) == ''))
+          errs <- c(errs, paste('Missing DE metadata in column:', v))
+      if (!is.null(cfg$de$reference) && cfg$de$condition_col %in% colnames(ss) &&
+          !cfg$de$reference %in% ss[[cfg$de$condition_col]])
+        errs <- c(errs, 'de$reference is not present in the sample sheet')
+      if (cfg$de$condition_col %in% unlist(cfg$de$covariates))
+        errs <- c(errs, 'de$condition_col cannot also be a covariate')
+    }
     if (cfg$clustering$integration == 'harmony' && !cfg$clustering$integration_by %in% colnames(ss))
       errs <- c(errs, paste('clustering$integration_by not in sample_sheet:', cfg$clustering$integration_by))
   }
@@ -359,4 +392,88 @@ save_plot_list <- function(plots, cfg, stem, width = cfg$plots$width, height = c
   walk(plots, print)
   invisible(dev.off())
   iwalk(plots, \(p, nm) ggsave(fig_path(cfg, paste0(stem, '_', nm, '.png')), p, width = width, height = height, dpi = 100))
+}
+
+# ---- Analysis safeguards ----
+# A requested adjustment is preserved unless the user explicitly opts into a
+# different design. Returning a reason lets step 06 audit every skipped subset.
+choose_de_design <- function(cd, cond, covars, policy = 'strict') {
+  use_cov <- covars
+  repeat {
+    single <- use_cov[vapply(use_cov, \(v) nlevels(factor(cd[[v]])) < 2, logical(1))]
+    fml <- reformulate(c(use_cov, cond))
+    if (length(single)) {
+      reason <- paste('single-level covariate:', paste(single, collapse = ', '))
+    } else {
+      mm <- model.matrix(fml, cd)
+      reason <- if (qr(mm)$rank < ncol(mm)) 'confounded design' else
+        if (nrow(mm) <= ncol(mm)) 'no residual degrees of freedom' else NULL
+    }
+    if (is.null(reason)) return(list(ok = TRUE, formula = fml, dropped = setdiff(covars, use_cov), reason = ''))
+    if (policy == 'strict' || !length(use_cov))
+      return(list(ok = FALSE, formula = fml, dropped = setdiff(covars, use_cov), reason = reason))
+    use_cov <- if (length(single)) setdiff(use_cov, single) else head(use_cov, -1)
+  }
+}
+
+# One agreeing donor is reported as available evidence, never as replication.
+# All expected strata must contribute, with at least min_strata paired strata.
+strata_evidence <- function(directions, effect, n_expected, min_strata = 2L) {
+  n <- length(directions)
+  available <- if (n) Reduce(`&`, lapply(directions, \(d) d == sign(effect))) else rep(NA, length(effect))
+  supported <- n >= min_strata && n == n_expected
+  list(available = available, consistent = if (supported) available else rep(NA, length(effect)),
+       support = if (!n) 'none' else if (n == 1) 'single_stratum' else
+         if (n < n_expected) 'partial_strata' else 'all_strata')
+}
+
+# RCTD requires raw nonnegative integer counts. Rounding corrected counts does
+# not reconstruct raw RNA and can disguise an unsuitable reference assay.
+validate_raw_counts <- function(counts, label = 'Reference') {
+  values <- if (inherits(counts, 'sparseMatrix')) counts@x else as.vector(counts)
+  if (!nrow(counts) || !ncol(counts) || any(!is.finite(values)) || any(values < 0) ||
+      any(abs(values - round(values)) > 1e-8))
+    stop(label, ': expected finite, nonnegative integer raw counts', call. = FALSE)
+  if (is.null(rownames(counts)) || is.null(colnames(counts)) ||
+      anyDuplicated(rownames(counts)) || anyDuplicated(colnames(counts)))
+    stop(label, ': gene and cell names must be present and unique', call. = FALSE)
+  if (any(Matrix::colSums(counts) <= 0))
+    stop(label, ': zero-count cells must be removed', call. = FALSE)
+  invisible(TRUE)
+}
+
+rctd_cache_key <- function(reference_key, counts, coords, settings) {
+  digest::digest(list(schema = 1L, reference = reference_key, counts = counts,
+                      coords = coords, settings = settings), algo = 'sha256')
+}
+
+read_rctd_cache <- function(path, key, force = FALSE) {
+  if (force || !file.exists(path)) return(NULL)
+  cached <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (!is.list(cached) || !identical(cached$key, key)) return(NULL)
+  cached$result
+}
+
+# Rename on the same filesystem prevents an interrupted write from looking valid.
+write_rctd_cache <- function(result, path, key) {
+  tmp <- tempfile(pattern = '.rctd-', tmpdir = dirname(path))
+  on.exit(unlink(tmp), add = TRUE)
+  saveRDS(list(key = key, result = result), tmp)
+  if (!file.rename(tmp, path)) stop('Could not save RCTD cache: ', path)
+}
+
+# Extract explicitly selected raw counts and align annotations by cell name.
+# The object's active assay is deliberately irrelevant to this operation.
+rctd_reference_inputs <- function(ref_obj, assay, celltype_col) {
+  if (!assay %in% SeuratObject::Assays(ref_obj)) stop('Reference assay not found: ', assay)
+  if (inherits(ref_obj[[assay]], 'SCTAssay') || tolower(assay) %in% c('sct', 'integrated'))
+    stop('RCTD reference must use original raw RNA counts, not SCT/integrated counts')
+  if (!celltype_col %in% colnames(ref_obj[[]])) stop('Reference celltype_col not found: ', celltype_col)
+  if (inherits(ref_obj[[assay]], 'Assay5'))
+    ref_obj[[assay]] <- SeuratObject::JoinLayers(ref_obj[[assay]])
+  counts <- SeuratObject::LayerData(ref_obj, assay = assay, layer = 'counts')
+  validate_raw_counts(counts)
+  if (!all(colnames(counts) %in% rownames(ref_obj[[]]))) stop('Reference counts and metadata do not align')
+  list(counts = as(counts, 'dgCMatrix'),
+       types = as.character(ref_obj[[]][colnames(counts), celltype_col]))
 }

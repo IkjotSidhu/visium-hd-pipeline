@@ -63,11 +63,16 @@ de:                             # pseudobulk DESeq2, replicate = unit of replica
   covariates: []                # e.g. [donor] for a paired design
   by_cluster: true              # also test within each main_resolution cluster
   min_bins: 50                  # a replicate needs this many bins/cells in a subset to be used
+  covariate_policy: strict       # skip unsupported adjustment; drop explicitly permits an unadjusted fallback
+  min_strata: 2                 # consistency requires ALL expected strata and at least this many
+  interpretation_notes: []      # study-specific limits written next to the DE results
 
 rctd:
   run: false
   reference_rds: null           # Seurat object of a tissue-matched single-cell reference
   celltype_col: null            # its cell-type column
+  reference_assay: RNA          # assay containing original raw counts (not SCT/integrated)
+  force_recompute: false       # true bypasses cache; changed inputs/settings invalidate it automatically
   min_cells_type: 25
   umi_min: 50
   mode: doublet                 # doublet | full | multi
