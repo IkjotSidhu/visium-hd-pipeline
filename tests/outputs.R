@@ -36,7 +36,9 @@ stopifnot(grepl('&lt;script&gt;', html_table(data.frame(label = '<script>')), fi
 cfg <- default_config; cfg$output_dir <- tempdir()
 plan <- plan_jobs(cfg)
 stopifnot(sum(grepl('^10_report ', plan)) == 1, startsWith(tail(plan, 1), '10_report all '),
-          sum(grepl('^08_annotation ', plan)) == 3, sum(grepl('^09_pathways ', plan)) == 3)
+          !any(grepl('^08_annotation ', plan)), sum(grepl('^09_pathways ', plan)) == 3)   # step 08 is opt-in
+cfg$annotation$run <- TRUE
+stopifnot(sum(grepl('^08_annotation ', plan_jobs(cfg))) == 3)
 cfg$de$run <- FALSE
 stopifnot(!any(grepl('^09_pathways ', plan_jobs(cfg))))
 cfg$report$run <- FALSE
