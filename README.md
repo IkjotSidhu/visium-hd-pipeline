@@ -1,9 +1,9 @@
 # Visium HD Analysis Pipeline
 
 Takes 10x Visium HD Space Ranger 4 output from raw counts to QC, clusters, markers,
-spatial domains and condition comparisons — for **8 µm bins, 16 µm bins and segmented
-cells** in one run. Capture areas that hold several tissue pieces (e.g. replicates or
-conditions side by side) are split automatically.
+spatial domains, condition comparisons and pathways — for **8 µm bins, 16 µm bins and
+segmented cells** in one run. Capture areas that hold several tissue pieces (e.g.
+replicates or conditions side by side) are split automatically.
 
 Runs on Minerva as a chain of LSF jobs. One config file, one command.
 
@@ -31,10 +31,6 @@ Runs on Minerva as a chain of LSF jobs. One config file, one command.
 cp /path/to/visium-hd-pipeline/config_template.yaml config.yaml
 ```
 
-The default clustering sweep is **0.1, 0.2, …, 2.0** for each bin/cell size.
-Every resolution gets its own UMAP, spatial cluster maps, composition plots and
-marker dot plots/heatmaps. BANKSY spatial domains use the same default sweep.
-
 At minimum set `sample_sheet`, and — if several pieces share a capture area —
 `replicates: layout: left_to_right` (pieces listed in the sheet in the order they sit on
 the slide). Every option is explained in the template.
@@ -45,8 +41,9 @@ the slide). Every option is explained in the template.
 bash /path/to/visium-hd-pipeline/run_pipeline.sh config.yaml
 ```
 
-Results appear in `output/`. Open `output/index.html` for the overview after completion.
-Follow the jobs with `bjobs`; logs are in `output/logs/`.
+Follow the jobs with `bjobs`; logs are in `output/logs/`. When the jobs finish,
+open **`output/index.html`** — one page with QC, clustering, DE and pathway summaries
+and every figure, for all bin sizes.
 
 ---
 
@@ -55,10 +52,11 @@ Follow the jobs with `bjobs`; logs are in `output/logs/`.
 | Look at | To check |
 |---|---|
 | `output/01_assign_replicates/figures/replicate_assignment_*.png` | Each tissue piece got the right replicate name |
-| `output/008um/02_load_qc/qc_report.html` | Group, sample and replicate QC summaries, before/after quality and retention |
+| `output/008um/02_load_qc/qc_report.html` | How many bins each group, sample and replicate kept, and why bins were removed |
 | `output/008um/03_cluster/figures/umap_metadata_donor.png` | Donors mix after batch correction |
 | `output/008um/03_cluster/res_1.0/figures/spatial_clusters_*.png` | Clusters on the H&E |
 | `output/008um/04_markers/res_1.0/tables/top10_markers_*.csv` | Marker genes for naming clusters |
+| `output/008um/06_pseudobulk_de/tables/pseudobulk_de_status.csv` | Which comparisons were tested, and why any were skipped |
 
 The same folders exist for `016um/` and `cells/`.
 
@@ -78,11 +76,12 @@ bash run_pipeline.sh config.yaml -n
 
 **Rerun from a given step** (earlier results are reused):
 ```bash
-bash run_pipeline.sh config.yaml -s 03-07        # steps 03 to 07
+bash run_pipeline.sh config.yaml -s 03-10        # steps 03 to 10
 bash run_pipeline.sh config.yaml -s 04-04        # just step 04
+bash run_pipeline.sh config.yaml -s 10-10        # just rebuild index.html
 ```
 
-**Run only some resolutions:**
+**Run only some bin sizes:**
 ```bash
 bash run_pipeline.sh config.yaml -r 8            # 8 µm only
 bash run_pipeline.sh config.yaml -r 16,cells
@@ -94,38 +93,29 @@ module purge && module load R/4.4.1
 Rscript /path/to/visium-hd-pipeline/steps/03_cluster.R config.yaml 8
 ```
 
-**Change QC thresholds** — in the config; one value for all resolutions or one per resolution:
+**Change QC thresholds** — one value for all bin sizes, or one per bin size:
 ```yaml
 qc:
   min_counts: {"8": 50, "16": 100, cells: 50}
   max_mt_pct: 50
 ```
 
-**Read QC at group, sample and replicate levels:**
-
-Open `output/<bin-size>/02_load_qc/qc_report.html`; the main overview also embeds
-these tables. Samples use `library_id` by default. Select a different sample
-column and grouping variables in the config:
-
+**Choose how the QC report groups samples:**
 ```yaml
 qc:
   report:
-    sample_col: visium_sample_id
-    group_cols: [condition, donor, tissue]
+    sample_col: visium_sample_id           # default: library_id
+    group_cols: [condition, donor, tissue] # each summarised separately
 ```
 
-Each group variable is summarized separately. Tables show unit counts before/
-after QC, retention, mean/median UMIs, mean/median detected genes per unit,
-mitochondrial percentage and contributing samples/replicates. Before-QC values
-and overlapping filter failures are available in expandable details.
-
-Download `qc_by_group.csv`, `qc_by_sample.csv`, and `qc_by_replicate.csv` for
-post-QC metrics with retention. `qc_metrics_by_*.csv` contains both stages;
-`qc_retention_by_*.csv` records filter counts. Means are weighted by individual
-bins/cells; zero-retained entities remain visible with unavailable averages.
-The loading-flow table distinguishes assignment losses and test sampling from
-QC removal. The legacy `qc_summary.csv` is retained for compatibility.
-`qc_unit_metrics.csv.gz` preserves per-unit metrics and QC status for later checks.
+**Explore clustering resolutions** — the default is 0.2, 0.5, 1 and 2. For a first look
+at a new dataset, sweep 0.1 to 2.0 (every resolution gets its own UMAP, spatial maps
+and markers; expect roughly twice the output size and runtime):
+```yaml
+clustering:
+  resolutions: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0]
+  main_resolution: 1            # used for DE and pathways
+```
 
 **Batch correction** — Harmony runs automatically when the sample sheet has more than one
 donor (or, without a `donor` column, more than one sample). To correct for a different
@@ -144,10 +134,33 @@ de:
   reference: Control
   covariates: [donor]
 ```
+A subset (e.g. a cluster) that cannot support the requested design is skipped, with the
+reason in `pseudobulk_de_status.csv`. A gene counts as `consistent_across_strata` only
+when its direction agrees in every donor.
 
-DE preserves requested covariates by default and writes a status table for skipped
-comparisons. The summary includes donor/stratum support; agreement in one donor
-does not count as consistency across donors.
+**Add pathway enrichment** — give a GMT file whose gene IDs match the DE results
+(gene symbols for the 10x probe sets), then rerun `-s 09-10`:
+```yaml
+pathways:
+  gmt_file: metadata/gene_sets/reactome_human_v97.gmt
+  collection: Reactome human pathways
+  version: "97"
+```
+
+**Apply cell-type labels** — turn on step 08 and run it once to get an
+`annotation_template.csv` per resolution (`08_annotation/res_<r>/tables/`). Copy it
+out of `output/`, fill `broad_type`, `confidence` (low/medium/high) and `evidence`,
+keep the `cluster` and `clustering_key` columns, then point the config at it and rerun
+`-s 08-10`:
+```yaml
+annotation:
+  run: true
+  mapping_files:
+    "8":
+      "1.0": metadata/annotations_8_res1.0.csv
+```
+A label file made for a different clustering is rejected, so rerun step 08 for a fresh
+template after reclustering.
 
 **Deconvolve with a single-cell reference (RCTD):**
 ```yaml
@@ -155,65 +168,10 @@ rctd:
   run: true
   reference_rds: /path/to/reference_seurat.rds
   celltype_col: cell_type
-  reference_assay: RNA
+  reference_assay: RNA           # the assay holding raw counts
 ```
-
-RCTD checks for raw integer counts in the selected assay. Changed inputs or settings
-invalidate its cache; `force_recompute: true` forces a fresh fit.
-
-**Review and apply cell-type labels:**
-
-Step 08 produces `08_annotation/res_0.1/tables/annotation_template.csv` through
-`res_2.0/` for each bin/cell size. Each clustering has its own fingerprint.
-Copy each template outside the output folder, fill `broad_type`, optional `cell_state`,
-`confidence` (`low`, `medium`, `high`) and `evidence`, retaining `cluster` and
-`clustering_key`. Configure one reviewed file per resolution:
-
-```yaml
-annotation:
-  mapping_files:
-    "8":
-      "0.1": metadata/annotations_8_res0.1.csv
-      "1.0": metadata/annotations_8_res1.0.csv
-    "16":
-      "1.0": metadata/annotations_16_res1.0.csv
-  require_complete: false
-```
-
-A legacy single-file mapping per bin size is used only for `main_resolution`.
-Rerun `-s 08-10`. Missing labels remain `Unannotated`; the original cluster IDs
-are retained. Mappings from a different clustering are rejected. Marker tests are
-annotation evidence, not condition-level inference. Legacy marker tables without
-a matching fingerprint are labelled `legacy_unverified`; rerun step 04 to verify them.
-
-**Add a pathway collection:**
-
-```yaml
-pathways:
-  gmt_file: metadata/gene_sets/reactome_human_v97.gmt
-  collection: Reactome human pathways
-  version: "97"
-  gene_id_type: symbol
-```
-
-Rerun `-s 09-10`. GMT gene identifiers must match the DE result identifiers; no ID
-conversion is performed. Enrichment uses all finite signed Wald statistics,
-including nonsignificant genes. Coverage tables explain which sets meet size
-limits; FDR is within each subset/contrast. Ranking ties and numerical warnings are
-recorded in the pathway status table; inspect them before interpreting results.
-The collection version and checksum
-are saved. With no GMT, step 09 reports a skip and writes empty results.
-
-**Rebuild only the overview:**
-
-```bash
-bash run_pipeline.sh config.yaml -s 10-10
-```
-
-The report needs no pandoc or web server. Copy the whole output folder to preserve
-its relative links. It shows available/disabled/missing artifacts and timestamps;
-partial reruns can contain outputs from different runs, so inspect provenance.
-A `-r 8` filter limits the overview to the selected resolution.
+Results are cached per replicate and recomputed automatically when the inputs or
+settings change (`force_recompute: true` forces a fresh run).
 
 **Split tissue pieces by hand** (irregular layouts) — export one CSV per capture area
 from Loupe Browser with columns `barcode` (8 µm) and `replicate_id`, save them as
@@ -238,18 +196,19 @@ lsf:
 | Step | Does | Key outputs |
 |---|---|---|
 | **01** assign replicates | Finds each tissue piece and names it from the sample sheet | Assignment tables, overlay on the H&E |
-| **02** load & QC | Loads bins/cells with the high-resolution H&E, adds sample-sheet columns, filters | QC summary, violin plots, UMI / MT% / pass-fail maps |
-| **03** cluster | Normalises, sketches, clusters at several resolutions, projects to every bin | UMAPs, clustree, cluster make-up per replicate, cluster maps |
-| **04** markers | Marker genes for each cluster | Marker tables, dot plot, heatmap |
+| **02** load & QC | Loads bins/cells with the high-resolution H&E, adds sample-sheet columns, filters | `qc_report.html`, QC tables by group/sample/replicate, Space Ranger metrics, UMI-vs-genes plots, QC maps |
+| **03** cluster | Normalises, sketches, clusters at each resolution, projects to every bin | UMAPs, clustree, cluster make-up per replicate, cluster maps |
+| **04** markers | Marker genes for each cluster, at each resolution | Marker tables, dot plot, heatmap |
 | **05** BANKSY | Spatial domains (expression + neighbourhood) | Domain labels and maps |
-| **06** pseudobulk DE | Condition comparison with replicates as the unit, whole tissue and per cluster | Results table, summary, volcano plot |
+| **06** pseudobulk DE | Condition comparison with replicates as the unit, whole tissue and per cluster | Results, summary, skip reasons, volcano, sample PCA and distance plots |
 | **07** RCTD | Cell-type proportions from a single-cell reference | Weights, dominant type maps, composition |
-| **08** annotation | Applies reviewed cluster labels and gathers marker evidence | Mapping template, annotations, spatial maps, replicate composition |
-| **09** pathways | Preranked enrichment from pseudobulk Wald statistics | Enrichment/FDR, leading-edge genes, overlap coverage, collection provenance |
-| **10** report | Collects summaries and figures across resolutions | Static `output/index.html`, artifact index, settings and timestamps |
+| **08** annotation | Applies your reviewed cluster labels | Label template, labelled maps, composition per replicate |
+| **09** pathways | Preranked enrichment (fgsea) from the DE statistics | Enrichment table, leading-edge genes, summary plots |
+| **10** report | Collects everything into one page | `output/index.html` |
 
-Steps 05–10 can be switched off in the config (`run: false`). Pathways also require
-DE to be enabled. The report is submitted once, after all selected resolution chains.
+Steps 05–10 can be switched on or off with `run:` in the config. Step 07 (needs a
+reference) and step 08 (needs label files) are off by default; step 09 is skipped
+when no GMT file is given.
 
 ## Output layout
 
@@ -257,49 +216,19 @@ DE to be enabled. The report is submitted once, after all selected resolution ch
 output/
 ├── 01_assign_replicates/
 ├── 008um/                       also 016um/ and cells/
-│   ├── 03_cluster/
-│   │   ├── figures/             shared metadata UMAPs and clustree
-│   │   ├── tables/              comparison across all 20 resolutions
-│   │   ├── res_0.1/             figures/, tables/, settings and session
-│   │   ├── res_0.2/
-│   │   └── ... res_2.0/
-│   ├── 04_markers/res_0.1/ ... res_2.0/
-│   ├── 05_banksy/res_0.1/ ... res_2.0/
-│   ├── 08_annotation/res_0.1/ ... res_2.0/
-│   ├── 02_load_qc/  06_pseudobulk_de/  07_rctd/  09_pathways/
-│   └── rds/                     one shared clustering object, per-resolution annotations
-├── 10_report/
-├── index.html                   expandable gallery for every resolution
+│   ├── 02_load_qc/              qc_report.html, figures/, tables/
+│   ├── 03_cluster/              shared UMAPs + clustree; res_<r>/ per resolution
+│   ├── 04_markers/res_<r>/
+│   ├── 05_banksy/res_<r>/
+│   ├── 06_pseudobulk_de/
+│   ├── 07_rctd/  08_annotation/res_<r>/  09_pathways/
+│   └── rds/                     Seurat objects passed between steps
+├── index.html                   overview of the whole run
 └── logs/
 ```
 
-`main_resolution` selects the default identity and the clustering for DE/pathway
-comparisons. Plotting, marker discovery and annotation run at **every** configured
-clustering resolution. The shared Seurat object stores all cluster labels, without
-copying the full expression matrix 20 times. Missing requested cluster columns
-cause an explicit error directing you to rerun step 03.
-
-Each clustering folder contains UMAP, per-library spatial maps, replicate
-composition and donor-mixing tables. Marker folders contain full/top marker tables
-and PNG/PDF dot plots and heatmaps. A no-marker resolution has explanatory figures
-and a status table. The report includes every resolution's PNGs without truncation.
-
-`params_used.yaml` records the exact settings each step ran with.
-
-Step 06 also writes VST sample PCA plots coloured by available metadata, sample-distance
-heatmaps, library sizes, size factors, PCA coordinates/genes and model matrices.
-`pseudobulk_diagnostics_status.csv` records success or failure per tested subset.
-
-Step 06 also writes:
-
-- `pseudobulk_de_status.csv`: tested/skipped subsets, reasons and fitted designs.
-- `pseudobulk_sample_eligibility.csv`: units retained per replicate and subset.
-- `pseudobulk_stratum_effects.csv.gz`: descriptive CPM effects within each donor/stratum.
-- `rds/06_pseudobulk_de.rds`: raw and DESeq2-normalized counts, sample metadata and designs for tested subsets.
-- `interpretation_notes.txt`: interpretation guidance and configured study notes.
-
-Step 07 writes `rctd_reference_cells.csv.gz` and `rctd_cache_manifest.csv` for
-reference inclusion and cache provenance.
+Every step folder holds `figures/`, `tables/`, `params_used.yaml` (the exact settings
+used) and `sessionInfo.txt`.
 
 ---
 
@@ -313,29 +242,4 @@ Minerva with the `R/4.4.1` module. The packages are already in the lab R library
 
 - [FAQ](FAQ.md) — QC choices, replicate splitting, statistics with few replicates, RCTD and HPC troubleshooting.
 - `config_template.yaml` — every option, with defaults.
-
-Focused checks (from the repository root):
-
-```bash
-module purge && module load R/4.4.1
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/regression.R
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/outputs.R
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/resolutions.R
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 Rscript tests/qc_reports.R
-```
-
-QC reports also include a **Bin Metrics Overview** imported from each library's
-Space Ranger `metrics_summary.csv`: tissue bins/squares, mean reads, mean UMIs,
-mean detected genes, distinct genes and capture-area coverage for 2/8/16 µm,
-plus sequencing/capture and cell segmentation summaries. These are full-library
-source metrics, including in test mode; they precede replicate assignment and
-pipeline QC. Missing fields remain unavailable. CSVs are exported as
-`spaceranger_{bins,sequencing,cells,status}_overview.csv`.
-
-QC reports include sample- and replicate-specific UMI versus detected-gene
-scatter plots before and after QC, with PNG/PDF exports in `figures/umi_genes/`.
-Each plot shows n and R² from OLS `genes ~ UMI` with an intercept on raw counts.
-Fits use every unit; only displayed points are capped at 20,000. Constant counts
-or fewer than three units produce an explicit unavailable fit. Coefficients,
-R², n and status are saved in `tables/umi_genes_fit_statistics.csv`. R² is a
-relationship diagnostic, not a quality threshold; saturation may be nonlinear.
+- `tests/` — quick checks after changing the code: `Rscript tests/<name>.R` (with `module load R/4.4.1`).
