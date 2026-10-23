@@ -33,7 +33,7 @@ default_config <- list(
     n_variable_features = 2000,
     sketch_cells        = 25000,          # cells sketched PER LAYER (= per sample/integration group)
     pca_dims            = 30,
-    resolutions         = c(0.2, 0.5, 1, 2), # (1:20) / 10 sweeps 0.1-2.0 for initial exploration
+    resolutions         = (1:20) / 10,
     main_resolution     = 1,
     integration         = 'auto',         # auto (Harmony when >1 donor/sample) | harmony | none
     integration_by      = 'donor'         # sample-sheet column Harmony corrects for (auto falls back to replicate_id)
@@ -43,7 +43,7 @@ default_config <- list(
                   gene_id_type = 'symbol', min_size = 15, max_size = 500, eps = 1e-10),
   report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
-  banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = c(0.5, 1), pca_dims = 30),
+  banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = (1:20) / 10, pca_dims = 30),
   de = list(
     run            = TRUE,
     condition_col  = 'condition',
@@ -68,7 +68,8 @@ default_config <- list(
     mode           = 'doublet',
     max_cores      = 4
   ),
-  plots = list(image_alpha = 0.4, width = 8, height = 8),
+  plots = list(image_alpha = 0.4, width = 8, height = 8, dpi = 300,   # PNG resolution
+               point_size = NULL, cell_diameter_um = 10),   # NULL = dots sized to one bin / cell
   lsf = list(
     project = 'acc_naiklab', queue = 'premium',
     resources = list(                     # cores / memory per core (MB) / walltime per step
@@ -385,66 +386,62 @@ sort_levels <- function(x) {
 }
 
 # ---- Spatial plotting ----
-# Hires H&E (dimmed) with each bin/cell drawn on top, rasterised so PDFs stay
-# small. Uses x_fullres / y_fullres / library_id from metadata, so it works the
-# same for bins and segmented cells. Returns one ggplot per library.
+# Full hires H&E (dimmed) with every bin/cell drawn on top as a vector dot, so
+# individual spots stay sharp at any zoom. Uses x_fullres / y_fullres /
+# library_id from metadata, so it works the same for bins and segmented cells.
+# Returns one ggplot per library.
 .image_cache <- new.env()
 load_hires <- function(sr_dir) {
   key <- normalizePath(sr_dir)
   if (is.null(.image_cache[[key]])) {
-    sp  <- spatial_dir(sr_dir)
-    img <- png::readPNG(file.path(sp, 'tissue_hires_image.png'))
-    sf  <- jsonlite::read_json(file.path(sp, 'scalefactors_json.json'))
-    # Downsample to <= 2500 px on the long side: embedding the full ~6000 px hires
-    # raster made every page ~25 MB; scale factor adjusted to match
-    f <- max(1, ceiling(max(dim(img)[1:2]) / 2500))
-    img <- img[seq(1, dim(img)[1], by = f), seq(1, dim(img)[2], by = f), , drop = FALSE]
-    sf$tissue_hires_scalef <- sf$tissue_hires_scalef / f
-    .image_cache[[key]] <- list(img = img, sf = sf)
+    sp <- spatial_dir(sr_dir)
+    .image_cache[[key]] <- list(img = png::readPNG(file.path(sp, 'tissue_hires_image.png')),   # full resolution, no downsampling
+                                sf  = jsonlite::read_json(file.path(sp, 'scalefactors_json.json')))
   }
   .image_cache[[key]]
 }
 
 plot_spatial <- function(md, color_by, cfg, sheet, palette = NULL, continuous = FALSE,
-                         limits = NULL, title_prefix = NULL) {
+                         limits = NULL, title_prefix = NULL, width = cfg$plots$width, height = cfg$plots$height) {
   lib_dirs <- sheet |> distinct(library_id, spaceranger_dir)
   map(set_names(lib_dirs$library_id), function(lib) {
-    hi  <- load_hires(lib_dirs$spaceranger_dir[lib_dirs$library_id == lib])
-    img <- hi$img[, , 1:3]
-    img <- img * cfg$plots$image_alpha + (1 - cfg$plots$image_alpha)   # blend toward white = dim
-    sc  <- hi$sf$tissue_hires_scalef
+    hi <- load_hires(lib_dirs$spaceranger_dir[lib_dirs$library_id == lib])
+    sc <- hi$sf$tissue_hires_scalef
 
     # Bin/cell positions in hires pixels (image y runs downward, so negate it)
     df <- md |>
       filter(library_id == lib) |>
       mutate(px = x_fullres * sc, py = -y_fullres * sc)
 
-    # Bins drawn as tiles of their true width; cells as points
-    if (cfg$res_label == 'cells') {
-      layer <- ggrastr::rasterise(geom_point(size = 0.5, stroke = 0), dpi = 300)
-    } else {
-      w <- as.numeric(cfg$bin_size) / hi$sf$microns_per_pixel * sc
-      layer <- ggrastr::rasterise(geom_tile(width = w, height = w), dpi = 300)
-    }
-    aes_fill <- if (cfg$res_label == 'cells') aes(colour = .data[[color_by]]) else aes(fill = .data[[color_by]])
+    # Crop the H&E to the plotted tissue (+ margin) so only that part is embedded, then dim it
+    m  <- 50
+    x0 <- max(1, floor(min(df$px) - m));  x1 <- min(dim(hi$img)[2], ceiling(max(df$px) + m))
+    y0 <- max(1, floor(-max(df$py) - m)); y1 <- min(dim(hi$img)[1], ceiling(-min(df$py) + m))
+    img <- hi$img[y0:y1, x0:x1, 1:3]
+    img <- img * cfg$plots$image_alpha + (1 - cfg$plots$image_alpha)   # blend toward white = dim
 
-    p <- ggplot(df, aes(px, py)) +
-      annotation_raster(img, xmin = 0, xmax = dim(img)[2], ymin = -dim(img)[1], ymax = 0) +
-      layer + aes_fill +
-      coord_fixed(xlim = range(df$px) + c(-50, 50), ylim = range(df$py) + c(-50, 50)) +
+    # Dot diameter = one bin (cells: cfg$plots$cell_diameter_um), converted to mm on the
+    # page. The panel is roughly the page minus legend/title; ggplot point size ~ diameter / 0.75 mm.
+    unit_um <- if (cfg$res_label == 'cells') cfg$plots$cell_diameter_um else as.numeric(cfg$bin_size)
+    unit_px <- unit_um / hi$sf$microns_per_pixel * sc
+    mm_per_px <- min((width * 25.4 - 40) / (x1 - x0), (height * 25.4 - 15) / (y1 - y0))
+    size <- cfg$plots$point_size %||% (0.9 * unit_px * mm_per_px / 0.75)
+
+    p <- ggplot(df, aes(px, py, colour = .data[[color_by]])) +
+      annotation_raster(img, xmin = x0 - 1, xmax = x1, ymin = -y1, ymax = -(y0 - 1)) +
+      geom_point(shape = 16, size = size, stroke = 0) +
+      coord_fixed(xlim = c(x0 - 1, x1), ylim = c(-y1, -(y0 - 1)), expand = FALSE) +
       labs(title = paste(c(title_prefix, lib), collapse = ' - '), x = NULL, y = NULL) +
       theme_void() +
       theme(plot.background = element_rect(fill = 'white', colour = NA))
 
-    is_cells <- cfg$res_label == 'cells'
     if (continuous) {
       # Sequential, light-low (Blues): low values recede into the tissue
-      blues <- RColorBrewer::brewer.pal(9, 'Blues')
-      p + if (is_cells) scale_colour_gradientn(colours = blues, limits = limits, oob = scales::squish, name = color_by)
-          else          scale_fill_gradientn(colours = blues, limits = limits, oob = scales::squish, name = color_by)
+      p + scale_colour_gradientn(colours = RColorBrewer::brewer.pal(9, 'Blues'), limits = limits,
+                                 oob = scales::squish, name = color_by)
     } else {
-      p + if (is_cells) scale_colour_manual(values = palette, breaks = names(palette), name = color_by, guide = guide_legend(override.aes = list(size = 3)))
-          else          scale_fill_manual(values = palette, breaks = names(palette), name = color_by)
+      p + scale_colour_manual(values = palette, breaks = names(palette), name = color_by,
+                              guide = guide_legend(override.aes = list(size = 3)))
     }
   })
 }
@@ -454,7 +451,7 @@ save_plot_list <- function(plots, cfg, stem, width = cfg$plots$width, height = c
   pdf(fig_path(cfg, paste0(stem, '.pdf')), width = width, height = height)
   walk(plots, print)
   invisible(dev.off())
-  iwalk(plots, \(p, nm) ggsave(fig_path(cfg, paste0(stem, '_', nm, '.png')), p, width = width, height = height, dpi = 100))
+  iwalk(plots, \(p, nm) ggsave(fig_path(cfg, paste0(stem, '_', nm, '.png')), p, width = width, height = height, dpi = cfg$plots$dpi))
 }
 
 # ---- Analysis safeguards ----

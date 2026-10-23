@@ -108,13 +108,21 @@ qc:
     group_cols: [condition, donor, tissue] # each summarised separately
 ```
 
-**Explore clustering resolutions** — the default is 0.2, 0.5, 1 and 2. For a first look
-at a new dataset, sweep 0.1 to 2.0 (every resolution gets its own UMAP, spatial maps
-and markers; expect roughly twice the output size and runtime):
+**Choose clustering resolutions** — the default sweeps 0.1 to 2.0 in steps of 0.1; every
+resolution gets its own UMAP, spatial maps and markers. List fewer to save time and space:
 ```yaml
 clustering:
-  resolutions: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0]
+  resolutions: [0.2, 0.5, 1, 2]
   main_resolution: 1            # used for DE and pathways
+```
+
+**Spatial plots** — every bin or cell is drawn as a dot (vector in the PDFs) over the
+full-resolution H&E. To change the look:
+```yaml
+plots:
+  image_alpha: 0.4              # H&E dimming (0 = hidden, 1 = full)
+  dpi: 300                      # PNG resolution
+  point_size: null              # null = one bin wide; or a fixed size
 ```
 
 **Batch correction** — Harmony runs automatically when the sample sheet has more than one

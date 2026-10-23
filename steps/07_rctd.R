@@ -125,7 +125,7 @@ ggsave(fig_path(cfg, 'rctd_composition.png'), p_comp, width = 9, height = 6, dpi
 
 # ---- Dominant type maps (hires) ----
 md_dom <- md |> inner_join(dominant, by = 'cell')
-save_plot_list(plot_spatial(md_dom, 'rctd_dominant_type', cfg, sheet, palette = type_pal[sort(unique(md_dom$rctd_dominant_type))]),
+save_plot_list(plot_spatial(md_dom, 'rctd_dominant_type', cfg, sheet, palette = type_pal[sort(unique(md_dom$rctd_dominant_type))], width = 10, height = 9),
                cfg, 'spatial_rctd_dominant_type', width = 10, height = 9)
 
 step_finish(cfg)
