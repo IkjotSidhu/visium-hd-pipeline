@@ -89,7 +89,7 @@ unlink(root, recursive = TRUE)
 cat('Annotation/report integration fixtures passed\n')
 
 # ---- Stable folder names, distinct bin sizes and resolution-specific labels ----
-stopifnot(identical(default_config$clustering$resolutions, (1:20)/10),
+stopifnot(identical(default_config$clustering$resolutions, c(0.2, 0.5, 1, 2)),
           identical(vapply(c(0.1, 1, 2), resolution_label, character(1)), c('0.1','1.0','2.0')))
 cfg <- default_config; cfg$output_dir <- tempdir(); cfg$res_label <- '008um'; cfg$bin_size <- '8'; cfg$step <- '08_annotation'
 cfg$annotation$mapping_files <- list('8' = list('0.1' = 'low.csv', '1.0' = 'primary.csv'))

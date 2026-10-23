@@ -33,17 +33,17 @@ default_config <- list(
     n_variable_features = 2000,
     sketch_cells        = 25000,          # cells sketched PER LAYER (= per sample/integration group)
     pca_dims            = 30,
-    resolutions         = (1:20) / 10,
+    resolutions         = c(0.2, 0.5, 1, 2), # (1:20) / 10 sweeps 0.1-2.0 for initial exploration
     main_resolution     = 1,
     integration         = 'auto',         # auto (Harmony when >1 donor/sample) | harmony | none
     integration_by      = 'donor'         # sample-sheet column Harmony corrects for (auto falls back to replicate_id)
   ),
-  annotation = list(run = TRUE, mapping_files = list(), require_complete = FALSE),
+  annotation = list(run = FALSE, mapping_files = list(), require_complete = FALSE),   # step 08: turn on to apply reviewed labels
   pathways = list(run = TRUE, gmt_file = NULL, collection = NULL, version = NULL,
                   gene_id_type = 'symbol', min_size = 15, max_size = 500, eps = 1e-10),
   report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
-  banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = (1:20) / 10, pca_dims = 30),
+  banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = c(0.5, 1), pca_dims = 30),
   de = list(
     run            = TRUE,
     condition_col  = 'condition',
