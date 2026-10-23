@@ -1,14 +1,23 @@
 # ---- 10_report.R ----
 # Lightweight static HTML report. No pandoc, browser, server or network needed.
 # The launcher submits this once after every selected resolution chain finishes.
+# Writes <output_dir>/index.html with relative links, so the output folder can be copied.
+#
+# Usage: Rscript steps/10_report.R config.yaml
+
+# ---- Setup ----
 source(file.path(dirname(sub('^--file=', '', grep('^--file=', commandArgs(FALSE), value = TRUE))), '..', 'R', 'utils.R'))
 cfg <- step_setup('10_report')
-filter <- Sys.getenv('VHD_REPORT_RESOLUTIONS', '')
+filter <- Sys.getenv('VHD_REPORT_RESOLUTIONS', '')              # set by run_pipeline.sh -r
 resolutions <- as.character(unlist(cfg$bin_sizes))
 if (nzchar(filter)) resolutions <- intersect(resolutions, strsplit(filter, ':', fixed = TRUE)[[1]])
+
+# Paths relative to output_dir, for links that survive copying the folder
 relative <- function(path) substring(path, nchar(cfg$output_dir) + 2L)
 href <- function(path) html_escape(URLencode(relative(path), reserved = FALSE))
 link <- function(path, label = basename(path)) paste0('<a href="', href(path), '">', html_escape(label), '</a>')
+
+# ---- Page header ----
 parts <- c('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
   paste0('<title>', html_escape(cfg$project_name), ' — analysis report</title>'),
   '<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1150px;margin:40px auto;padding:0 20px;color:#243247;background:#fafbfc}h1,h2,h3{line-height:1.2}a{color:#165c9c}section{background:white;padding:22px;margin:20px 0;border:1px solid #dce2e8;border-radius:8px}.table-scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:7px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}th{background:#eff4f8}img{max-width:100%;height:auto}figure{margin:20px 0}small{color:#556}code{overflow-wrap:anywhere}.notice{border-left:4px solid #c28a2c;padding:12px;background:#fff6e5}</style></head><body>',
@@ -18,6 +27,8 @@ parts <- c('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta nam
          'Pipeline commit: <code>', html_escape(cfg$pipeline_commit %||% 'unavailable'), '</code>. ',
          'Working tree: ', html_escape(cfg$pipeline_worktree %||% 'unavailable'), '.</p>'),
   '<nav><a href="#study">Study</a> · <a href="#provenance">Provenance</a></nav>')
+
+# ---- Study design and replicate assignment ----
 ss <- read_sample_sheet(cfg)
 parts <- c(parts, '<section id="study"><h2>Study design and interpretation</h2>',
            html_table(ss |> select(-spaceranger_dir), cfg$report$max_table_rows))
@@ -30,7 +41,10 @@ if (dir.exists(assignment)) {
   parts <- c(parts, '<section><h2>Replicate assignment</h2>',
              paste0('<p>', vapply(images, link, character(1)), '</p>'), '</section>')
 }
-summary_files <- c( '03_cluster/tables/clustering_resolution_summary.csv',
+
+# ---- One section per bin size / cells ----
+# Key summary tables shown inline when present
+summary_files <- c('03_cluster/tables/clustering_resolution_summary.csv',
   '06_pseudobulk_de/tables/pseudobulk_de_status.csv',
   '06_pseudobulk_de/tables/pseudobulk_de_summary.csv',
   '06_pseudobulk_de/tables/pseudobulk_diagnostics_status.csv',
@@ -41,6 +55,8 @@ for (res in resolutions) {
   label <- if (res == 'cells') 'cells' else sprintf('%03dum', as.integer(res))
   root <- file.path(cfg$output_dir, label)
   parts <- c(parts, paste0('<section><h2>', html_escape(label), '</h2>'))
+
+  # Step status: disabled, complete (params + sessionInfo written) or missing
   for (step in c('02_load_qc', '03_cluster', '04_markers', '05_banksy', '06_pseudobulk_de', '07_rctd', '08_annotation', '09_pathways')) {
     params <- file.path(root, step, 'params_used.yaml')
     complete <- file.exists(params) && file.exists(file.path(root, step, 'sessionInfo.txt'))
@@ -51,15 +67,18 @@ for (res in resolutions) {
     parts <- c(parts, paste0('<p><strong>', html_escape(step), '</strong>: ', html_escape(state),
       if (complete) paste0(' · last completed ', html_escape(as.character(file.info(params)$mtime)), ' · ', link(params, 'settings')) else '', '</p>'))
   }
-  qc_path <- file.path(root,'02_load_qc','qc_reports.rds')
+
+  # QC tables (from step 02's saved report object; older runs only have qc_summary.csv)
+  qc_path <- file.path(root, '02_load_qc', 'qc_reports.rds')
   if (file.exists(qc_path)) {
     reports <- readRDS(qc_path)
-    parts <- c(parts,paste0('<p>',link(file.path(root,'02_load_qc','qc_report.html'),'Open dedicated QC report'),'</p>'),
-      render_qc_sections(reports,table_prefix = paste0(label,'/02_load_qc/tables/'),
-                         max_rows = cfg$report$max_table_rows,id_prefix = paste0(label,'-')))
+    parts <- c(parts, paste0('<p>', link(file.path(root, '02_load_qc', 'qc_report.html'), 'Open dedicated QC report'), '</p>'),
+      render_qc_sections(reports, table_prefix = paste0(label, '/02_load_qc/tables/'),
+                         max_rows = cfg$report$max_table_rows, id_prefix = paste0(label, '-')))
   } else {
-    legacy <- file.path(root,'02_load_qc/tables/qc_summary.csv')
-    if (file.exists(legacy)) parts <- c(parts,'<h3>Legacy QC summary</h3>',html_table(read_csv(legacy,show_col_types=FALSE),cfg$report$max_table_rows))
+    legacy <- file.path(root, '02_load_qc/tables/qc_summary.csv')
+    if (file.exists(legacy))
+      parts <- c(parts, '<h3>QC summary</h3>', html_table(read_csv(legacy, show_col_types = FALSE), cfg$report$max_table_rows))
   }
   for (file in summary_files) {
     path <- file.path(root, file)
@@ -69,6 +88,8 @@ for (res in resolutions) {
                                     html_table(tbl, cfg$report$max_table_rows))
     }
   }
+
+  # Figures: shared DE/pathway plots, then a collapsible gallery per clustering resolution
   all_files <- list.files(root, recursive = TRUE, full.names = TRUE)
   all_files <- all_files[!file.info(all_files)$isdir]
   if (length(all_files)) {
@@ -104,6 +125,8 @@ for (res in resolutions) {
   }
   parts <- c(parts, '</section>')
 }
+
+# ---- Artifact index and provenance ----
 write_csv(bind_rows(c(list(tibble(resolution = character(), path = character(), bytes = double(), modified = character())), artifact_rows)),
           tab_path(cfg, 'artifact_index.csv'))
 step_finish(cfg)

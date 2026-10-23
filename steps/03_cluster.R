@@ -129,7 +129,7 @@ for (r in cl$resolutions) {
     tab_path(current, 'cluster_composition.csv'))
   p_comp <- ggplot(comp, aes(cluster, frac, fill = replicate_id)) + geom_col() +
     scale_fill_manual(values = make_palette(sheet$replicate_id)) +
-    labs(title = paste('Replicate make-up of clusters — resolution', resolution_label(r)),
+    labs(title = paste('Replicate make-up of clusters - resolution', resolution_label(r)),
          x = 'Cluster', y = 'Fraction of units') + theme_classic()
   ggsave(fig_path(current, 'cluster_by_replicate.pdf'), p_comp, width = 12, height = 5)
   ggsave(fig_path(current, 'cluster_by_replicate.png'), p_comp, width = 12, height = 5, dpi = 100)

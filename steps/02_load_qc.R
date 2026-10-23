@@ -77,8 +77,9 @@ obj_list <- map(set_names(unique(sheet$library_id)), function(lib) {
     keep <- seq_along(rep_id) %in% sel
     log_msg(cfg, lib, ': test mode - keeping ', round(100 * cfg$test_fraction), '% of each replicate')
   }
-  loading_rows[[lib]] <<- tibble(library_id = lib,n_loaded = n_before,n_assigned = n_assigned,
-                                n_unassigned = n_before-n_assigned,n_selected = sum(keep))
+  # Loading flow for the QC report: loaded -> assigned to a replicate -> selected (test mode)
+  loading_rows[[lib]] <<- tibble(library_id = lib, n_loaded = n_before, n_assigned = n_assigned,
+                                 n_unassigned = n_before - n_assigned, n_selected = sum(keep))
   obj <- subset(obj, cells = colnames(obj)[keep])
   rep_id <- rep_id[keep]
   log_msg(cfg, lib, ': ', ncol(obj), ' of ', n_before, ' ', unit_label, ' assigned to a replicate')
@@ -117,11 +118,12 @@ qc_summary <- qc_df |>
 print(qc_summary, width = Inf)
 write_csv(qc_summary, tab_path(cfg, 'qc_summary.csv'))
 
-write_csv(qc_df |> mutate(unit_id = paste(library_id,barcode,sep = '_'), .before = 1),
-          tab_path(cfg,'qc_unit_metrics.csv.gz'))
-reports <- build_qc_reports(qc_df,sheet,cfg,count_col,feat_col,bind_rows(loading_rows))
-reports$relationships <- write_qc_relationship_plots(qc_df,cfg,count_col,feat_col)
-write_qc_reports(reports,cfg)
+# Per-unit metrics and pass/fail, then the group/sample/replicate QC report (R/qc_reports.R)
+write_csv(qc_df |> mutate(unit_id = paste(library_id, barcode, sep = '_'), .before = 1),
+          tab_path(cfg, 'qc_unit_metrics.csv.gz'))
+reports <- build_qc_reports(qc_df, sheet, cfg, count_col, feat_col, bind_rows(loading_rows))
+reports$relationships <- write_qc_relationship_plots(qc_df, cfg, count_col, feat_col)   # UMI vs genes plots
+write_qc_reports(reports, cfg)
 
 # Flag uneven loss between conditions (biases composition comparisons)
 if (cfg$de$condition_col %in% colnames(qc_df)) {

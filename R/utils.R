@@ -164,11 +164,13 @@ validate_config <- function(cfg) {
       errs <- c(errs, 'rctd$force_recompute must be true or false')
   }
 
-  if (!is.character(cfg$qc$report$sample_col) || length(cfg$qc$report$sample_col) != 1 || is.na(cfg$qc$report$sample_col) || !nzchar(cfg$qc$report$sample_col))
-    errs <- c(errs,'qc$report$sample_col must name one sample-sheet column')
+  # QC report settings
+  sample_col <- cfg$qc$report$sample_col
+  if (!is.character(sample_col) || length(sample_col) != 1 || is.na(sample_col) || !nzchar(sample_col))
+    errs <- c(errs, 'qc$report$sample_col must name one sample-sheet column')
   if (!is.numeric(cfg$qc$report$max_rows) || length(cfg$qc$report$max_rows) != 1 ||
       !is.finite(cfg$qc$report$max_rows) || cfg$qc$report$max_rows < 1 || cfg$qc$report$max_rows %% 1 != 0)
-    errs <- c(errs,'qc$report$max_rows must be a positive integer')
+    errs <- c(errs, 'qc$report$max_rows must be a positive integer')
   # Sample sheet columns and Space Ranger folders
   if (!is.null(cfg$sample_sheet) && file.exists(cfg$sample_sheet)) {
     ss <- utils::read.csv(cfg$sample_sheet, check.names = FALSE)
@@ -197,10 +199,13 @@ validate_config <- function(cfg) {
       if (cfg$de$condition_col %in% unlist(cfg$de$covariates))
         errs <- c(errs, 'de$condition_col cannot also be a covariate')
     }
-    qc_cols <- unique(c(cfg$qc$report$sample_col, unlist(cfg$qc$report$group_cols)))
-    if (length(setdiff(qc_cols,colnames(ss)))) errs <- c(errs,paste('QC reporting columns missing:',paste(setdiff(qc_cols,colnames(ss)),collapse=', ')))
-    if (length(cfg$qc$report$sample_col) == 1 && !is.na(cfg$qc$report$sample_col) && cfg$qc$report$sample_col %in% colnames(ss) && any(is.na(ss[[cfg$qc$report$sample_col]]) | trimws(as.character(ss[[cfg$qc$report$sample_col]])) == ''))
-      errs <- c(errs,'QC sample identifiers must not be missing')
+    # QC report columns must exist, and every row needs a sample identifier
+    qc_cols <- unique(c(sample_col, unlist(cfg$qc$report$group_cols)))
+    missing_qc <- setdiff(qc_cols, colnames(ss))
+    if (length(missing_qc)) errs <- c(errs, paste('QC reporting columns missing:', paste(missing_qc, collapse = ', ')))
+    if (length(sample_col) == 1 && !is.na(sample_col) && sample_col %in% colnames(ss) &&
+        any(is.na(ss[[sample_col]]) | trimws(as.character(ss[[sample_col]])) == ''))
+      errs <- c(errs, 'QC sample identifiers must not be missing')
     if (cfg$clustering$integration == 'harmony' && !cfg$clustering$integration_by %in% colnames(ss))
       errs <- c(errs, paste('clustering$integration_by not in sample_sheet:', cfg$clustering$integration_by))
   }

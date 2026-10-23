@@ -2,9 +2,16 @@
 # Preranked fgsea using the signed DESeq2 Wald statistic for every eligible gene.
 # Gene sets are explicit, versioned GMT inputs. Missing collections are reported
 # as skipped; no gene sets are downloaded or invented during a pipeline run.
+# Tests the same subsets as step 06 (whole tissue + main_resolution clusters).
+#
+# Usage: Rscript steps/09_pathways.R config.yaml [8|16|cells]
+
+# ---- Setup ----
 source(file.path(dirname(sub('^--file=', '', grep('^--file=', commandArgs(FALSE), value = TRUE))), '..', 'R', 'utils.R'))
 cfg <- step_setup('09_pathways')
 settings <- cfg$pathways
+
+# Empty tables with the output schema, so skipped runs still write readable files
 result_template <- tibble(subset = character(), contrast = character(), pathway = character(),
   pval = double(), padj = double(), log2err = double(), ES = double(), NES = double(),
   size = integer(), leading_edge = character())
@@ -15,6 +22,8 @@ status_template <- tibble(subset = character(), contrast = character(), status =
 results <- list(result_template); coverage_rows <- list(coverage_template); statuses <- list(status_template)
 # Remove stale figures if a rerun has no configured/testable collection.
 unlink(list.files(file.path(cfg$step_dir, 'figures'), pattern = '^pathway_.*\\.(png|pdf)$', full.names = TRUE))
+
+# ---- Gene sets and DE input ----
 if (is.null(settings$gmt_file)) {
   unlink(file.path(cfg$step_dir, 'gene_set_manifest.yaml'))
   statuses[[2]] <- tibble(subset = 'all', contrast = 'all', status = 'skipped',
@@ -36,9 +45,12 @@ if (is.null(settings$gmt_file)) {
   groups <- de_results |> distinct(subset, contrast)
   if (!nrow(groups)) statuses[[2]] <- tibble(subset = 'all', contrast = 'all', status = 'skipped',
     reason = 'DE produced no testable comparisons', n_genes_ranked = 0L, n_zero_statistics = 0L, n_tied_statistics = 0L)
+
+  # ---- Preranked fgsea per subset / contrast ----
   for (i in seq_len(nrow(groups))) {
     sub <- groups$subset[i]; comparison <- groups$contrast[i]
     ranks <- pathway_ranks(de_results |> filter(subset == sub, contrast == comparison))
+    # Gene-set overlap with the ranked genes decides which sets are eligible
     overlap <- vapply(pathways, function(g) sum(g %in% names(ranks)), integer(1))
     coverage <- tibble(subset = sub, contrast = comparison, pathway = names(pathways),
       n_collection_genes = lengths(pathways), n_ranked_overlap = overlap,
@@ -77,6 +89,8 @@ if (is.null(settings$gmt_file)) {
     statuses[[length(statuses) + 1L]] <- status
   }
 }
+
+# ---- Attach reviewed cluster labels (step 08, main resolution) when available ----
 results_tbl <- bind_rows(results) |> mutate(cluster = sub('^cluster_', '', subset))
 annotation_cfg <- cfg; annotation_cfg$cluster_resolution <- cfg$clustering$main_resolution
 annotation_file <- file.path(step_dir(annotation_cfg, '08_annotation'), 'tables', 'cluster_annotations.csv')
@@ -87,6 +101,8 @@ if (file.exists(annotation_file)) {
 } else results_tbl$broad_type <- NA_character_
 results_tbl <- results_tbl |> mutate(broad_type = if_else(subset == 'all_bins', 'Whole tissue', replace_na(broad_type, 'Unannotated'))) |>
   select(-cluster)
+
+# ---- Write results, summary, coverage and status ----
 write_csv(results_tbl, tab_path(cfg, 'pathway_enrichment.csv.gz'))
 summary_tbl <- results_tbl |> group_by(subset, contrast, broad_type) |>
   summarise(pathways_tested = n(), significant_fdr05 = sum(padj < 0.05, na.rm = TRUE),
