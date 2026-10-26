@@ -205,7 +205,7 @@ lsf:
 |---|---|---|
 | **01** assign replicates | Finds each tissue piece and names it from the sample sheet | Assignment tables, overlay on the H&E |
 | **02** load & QC | Loads bins/cells with the high-resolution H&E, adds sample-sheet columns, filters | `qc_report.html`, QC tables by group/sample/replicate, Space Ranger metrics, UMI-vs-genes plots, QC maps |
-| **03** cluster | Normalises, sketches, clusters at each resolution, projects to every bin | UMAPs, clustree, cluster make-up per replicate, cluster maps |
+| **03** cluster | Normalises, sketches, clusters at each resolution, projects to every bin | UMAPs (also split by condition), clustree, cluster make-up per replicate and condition, cluster maps |
 | **04** markers | Marker genes for each cluster, at each resolution | Marker tables, dot plot, heatmap |
 | **05** BANKSY | Spatial domains (expression + neighbourhood) | Domain labels and maps |
 | **06** pseudobulk DE | Condition comparison with replicates as the unit, whole tissue and per cluster | Results, summary, skip reasons, volcano, sample PCA and distance plots |

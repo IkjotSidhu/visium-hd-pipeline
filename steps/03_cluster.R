@@ -133,6 +133,58 @@ for (r in cl$resolutions) {
          x = 'Cluster', y = 'Fraction of units') + theme_classic()
   ggsave(fig_path(current, 'cluster_by_replicate.pdf'), p_comp, width = 12, height = 5)
   ggsave(fig_path(current, 'cluster_by_replicate.png'), p_comp, width = 12, height = 5, dpi = 100)
+
+  # ---- Clusters by condition ----
+  cond <- cfg$de$condition_col
+  if (cond %in% colnames(md)) {
+    cluster_pal <- make_palette(levels(obj[[column]][, 1]))
+
+    # UMAP split by condition (one panel per condition, same coordinates);
+    # all units in light grey behind each panel show where a condition is absent
+    p_split <- ggplot(md, aes(umap_1, umap_2)) +
+      ggrastr::rasterise(geom_point(data = select(md, umap_1, umap_2), colour = 'grey85', size = 0.1, stroke = 0), dpi = 300) +
+      ggrastr::rasterise(geom_point(aes(colour = .data[[column]]), size = 0.3, stroke = 0), dpi = 300) +
+      facet_wrap(vars(.data[[cond]])) +
+      scale_colour_manual(values = cluster_pal) +
+      guides(colour = guide_legend(override.aes = list(size = 3), ncol = if (length(cluster_pal) > 20) 2 else 1)) +
+      labs(title = paste('Clusters by', cond, '- resolution', resolution_label(r)), x = 'UMAP 1', y = 'UMAP 2', colour = 'Cluster') +
+      theme_classic() + coord_fixed()
+    save_plot_list(list(condition = p_split), current, 'umap_clusters_by',
+                   width = 6 * n_distinct(md[[cond]]) + 2, height = 7)
+
+    # Fraction of each replicate's units in each cluster; condition = mean of its replicates
+    rep_comp <- md |> count(replicate_id, condition = .data[[cond]], cluster = .data[[column]]) |>
+      complete(nesting(replicate_id, condition), cluster, fill = list(n = 0L)) |>
+      group_by(replicate_id) |> mutate(fraction = n / sum(n)) |> ungroup()
+    cond_comp <- rep_comp |> group_by(condition, cluster) |>
+      summarise(mean_fraction = mean(fraction), sd_fraction = sd(fraction), n_replicates = n(), .groups = 'drop')
+    write_csv(cond_comp |> rename(!!cond := condition), tab_path(current, 'cluster_composition_by_condition.csv'))
+
+    # Bars = condition mean, dots = individual replicates
+    p_cond <- ggplot(cond_comp, aes(cluster, mean_fraction, fill = condition)) +
+      geom_col(position = position_dodge(width = 0.8), width = 0.75) +
+      geom_point(data = rep_comp, aes(y = fraction, group = condition), colour = 'black', size = 1,
+                 position = position_dodge(width = 0.8)) +
+      scale_fill_manual(values = make_palette(sort_levels(md[[cond]]))) +
+      labs(title = paste('Cluster composition by', cond, '- resolution', resolution_label(r)),
+           subtitle = 'Bars: mean across replicates; dots: individual replicates',
+           x = 'Cluster', y = 'Fraction of units', fill = cond) +
+      theme_classic()
+    ggsave(fig_path(current, 'cluster_composition_by_condition.pdf'), p_cond, width = 12, height = 5)
+    ggsave(fig_path(current, 'cluster_composition_by_condition.png'), p_cond, width = 12, height = 5, dpi = 100)
+
+    # Stacked cluster make-up of each replicate, grouped by condition
+    p_stack <- ggplot(rep_comp, aes(replicate_id, fraction, fill = cluster)) +
+      geom_col() +
+      facet_grid(cols = vars(condition), scales = 'free_x', space = 'free_x') +
+      scale_fill_manual(values = cluster_pal) +
+      guides(fill = guide_legend(ncol = if (length(cluster_pal) > 20) 2 else 1)) +
+      labs(title = paste('Cluster make-up of each replicate by', cond, '- resolution', resolution_label(r)),
+           x = NULL, y = 'Fraction of units', fill = 'Cluster') +
+      theme_classic() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    ggsave(fig_path(current, 'replicate_composition_by_condition.pdf'), p_stack, width = 10, height = 6)
+    ggsave(fig_path(current, 'replicate_composition_by_condition.png'), p_stack, width = 10, height = 6, dpi = 100)
+  }
   n_single <- NA_integer_
   if ('donor' %in% colnames(md)) {
     donor_mix <- md |> count(cluster = .data[[column]], donor) |>
