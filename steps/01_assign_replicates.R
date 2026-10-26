@@ -138,7 +138,7 @@ for (lib in unique(sheet$library_id)) {
                                        title_prefix = 'Replicate assignment')[[lib]]
 }
 
-# One PDF page per library (+ replicate_assignment_<library>.png)
+# One PDF + PNG per library: replicate_assignment_<library>.pdf/.png
 save_plot_list(overlay_plots, cfg, 'replicate_assignment')
 
 # ---- Summary ----

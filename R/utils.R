@@ -446,12 +446,12 @@ plot_spatial <- function(md, color_by, cfg, sheet, palette = NULL, continuous = 
   })
 }
 
-# Save a list of plots one per page of a PDF plus a PNG of each for quick viewing
+# Save each plot in a list (e.g. one per sample/library) as its own PDF and PNG: <stem>_<name>.pdf/.png
 save_plot_list <- function(plots, cfg, stem, width = cfg$plots$width, height = cfg$plots$height) {
-  pdf(fig_path(cfg, paste0(stem, '.pdf')), width = width, height = height)
-  walk(plots, print)
-  invisible(dev.off())
-  iwalk(plots, \(p, nm) ggsave(fig_path(cfg, paste0(stem, '_', nm, '.png')), p, width = width, height = height, dpi = cfg$plots$dpi))
+  iwalk(plots, function(p, nm) {
+    ggsave(fig_path(cfg, paste0(stem, '_', nm, '.pdf')), p, width = width, height = height)
+    ggsave(fig_path(cfg, paste0(stem, '_', nm, '.png')), p, width = width, height = height, dpi = cfg$plots$dpi)
+  })
 }
 
 # ---- Analysis safeguards ----
