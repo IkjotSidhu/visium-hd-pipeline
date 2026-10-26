@@ -41,33 +41,49 @@ write_pseudobulk_diagnostics <- function(dds, metadata, cfg, label) {
   design <- model.matrix(DESeq2::design(dds), as.data.frame(SummarizedExperiment::colData(dds)))
   write_csv(as_tibble(design, rownames = 'replicate_id'), tab_path(cfg, paste0(label, '_model_matrix.csv')))
   saveRDS(vst, file.path(cfg$step_dir, paste0(label, '_vst.rds')))
-  variance <- apply(vst, 1, var)
-  selected <- names(sort(variance[is.finite(variance) & variance > 0], decreasing = TRUE))
-  selected <- head(selected, cfg$de$diagnostics$top_variable_genes)
-  if (length(selected) < 2 || ncol(vst) < 3) stop('PCA requires >=2 variable genes and >=3 samples')
-  pc <- prcomp(t(vst[selected, , drop = FALSE]), center = TRUE, scale. = FALSE)
-  percent <- 100 * pc$sdev^2 / sum(pc$sdev^2)
-  scores <- as_tibble(pc$x[, 1:2, drop = FALSE], rownames = 'replicate_id') |>
-    left_join(metadata, by = 'replicate_id')
-  write_csv(scores, tab_path(cfg, paste0(label, '_pca_scores.csv')))
-  write_csv(tibble(gene = selected, variance = variance[selected]), tab_path(cfg, paste0(label, '_pca_genes.csv')))
-  write_csv(tibble(component = seq_along(percent), percent_variance = percent),
-            tab_path(cfg, paste0(label, '_pca_variance.csv')))
-  groups <- intersect(unique(c(cfg$de$condition_col, cfg$de$diagnostics$metadata_cols)), colnames(scores))
-  for (group in groups) {
-    p <- ggplot(scores, aes(PC1, PC2, colour = factor(.data[[group]]))) +
-      geom_point(size = 3) +
-      ggrepel::geom_text_repel(aes(label = replicate_id), seed = cfg$seed, max.overlaps = Inf,
-                               box.padding = 0.5, point.padding = 0.4, size = 3, show.legend = FALSE) +
-      scale_x_continuous(expand = expansion(mult = 0.2)) +
-      scale_y_continuous(expand = expansion(mult = 0.2)) +
-      labs(title = paste('Pseudobulk PCA:', label), colour = group,
-           subtitle = 'VST; descriptive sample diagnostics; no batch correction',
-           x = sprintf('PC1 (%.1f%%)', percent[1]), y = sprintf('PC2 (%.1f%%)', percent[2])) + theme_classic()
-    stem <- paste0(label, '_pca_', gsub('[^[:alnum:]_-]', '_', group))
-    ggsave(fig_path(cfg, paste0(stem, '.png')), p, width = 9, height = 7, dpi = 100)
-    ggsave(fig_path(cfg, paste0(stem, '.pdf')), p, width = 9, height = 7)
+  # PCA on the high-variance genes, saved as <label>_pca[_suffix]_<group> for each metadata column
+  plot_pca <- function(mat, suffix, subtitle) {
+    variance <- apply(mat, 1, var)
+    selected <- names(sort(variance[is.finite(variance) & variance > 0], decreasing = TRUE))
+    selected <- head(selected, cfg$de$diagnostics$top_variable_genes)
+    if (length(selected) < 2 || ncol(mat) < 3) stop('PCA requires >=2 variable genes and >=3 samples')
+    pc <- prcomp(t(mat[selected, , drop = FALSE]), center = TRUE, scale. = FALSE)
+    percent <- 100 * pc$sdev^2 / sum(pc$sdev^2)
+    scores <- as_tibble(pc$x[, 1:2, drop = FALSE], rownames = 'replicate_id') |>
+      left_join(metadata, by = 'replicate_id')
+    prefix <- paste0(label, '_pca', suffix)
+    write_csv(scores, tab_path(cfg, paste0(prefix, '_scores.csv')))
+    write_csv(tibble(gene = selected, variance = variance[selected]), tab_path(cfg, paste0(prefix, '_genes.csv')))
+    write_csv(tibble(component = seq_along(percent), percent_variance = percent),
+              tab_path(cfg, paste0(prefix, '_variance.csv')))
+    groups <- intersect(unique(c(cfg$de$condition_col, cfg$de$diagnostics$metadata_cols)), colnames(scores))
+    for (group in groups) {
+      p <- ggplot(scores, aes(PC1, PC2, colour = factor(.data[[group]]))) +
+        geom_point(size = 3) +
+        ggrepel::geom_text_repel(aes(label = replicate_id), seed = cfg$seed, max.overlaps = Inf,
+                                 box.padding = 0.5, point.padding = 0.4, size = 3, show.legend = FALSE) +
+        scale_x_continuous(expand = expansion(mult = 0.2)) +
+        scale_y_continuous(expand = expansion(mult = 0.2)) +
+        labs(title = paste('Pseudobulk PCA:', label), colour = group, subtitle = subtitle,
+             x = sprintf('PC1 (%.1f%%)', percent[1]), y = sprintf('PC2 (%.1f%%)', percent[2])) + theme_classic()
+      stem <- paste0(prefix, '_', gsub('[^[:alnum:]_-]', '_', group))
+      ggsave(fig_path(cfg, paste0(stem, '.png')), p, width = 9, height = 7, dpi = 100)
+      ggsave(fig_path(cfg, paste0(stem, '.pdf')), p, width = 9, height = 7)
+    }
   }
+  plot_pca(vst, '', 'VST; no batch correction')
+
+  # Same PCA with the DE covariates (e.g. donor) regressed out while keeping the
+  # condition effect, as in the DESeq2 vignette. For display only; DE itself
+  # adjusts for covariates through its design formula.
+  cd <- as.data.frame(SummarizedExperiment::colData(dds))
+  covars <- setdiff(all.vars(DESeq2::design(dds)), cfg$de$condition_col)
+  if (length(covars)) {
+    corrected <- limma::removeBatchEffect(vst, covariates = model.matrix(reformulate(covars), cd)[, -1, drop = FALSE],
+                                          design = model.matrix(reformulate(cfg$de$condition_col), cd))
+    plot_pca(corrected, '_corrected', paste('VST;', paste(covars, collapse = ' + '), 'removed (display only)'))
+  }
+
   # Distances use all retained genes; PCA uses the selected high-variance genes.
   distances <- as.matrix(dist(t(vst)))
   write_csv(as_tibble(distances, rownames = 'replicate_id'), tab_path(cfg, paste0(label, '_sample_distances.csv')))
