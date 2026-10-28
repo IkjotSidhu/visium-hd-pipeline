@@ -200,13 +200,13 @@ order is irregular, export labels from Loupe Browser and use `layout: manual`.
 
 ## Plots
 
-**Q: Why use the hires image, and why are my spatial PDFs so big?**
-Seurat's loader defaults to the lowres image; the pipeline always loads
-`tissue_hires_image.png`. Large PDFs come from tens of thousands of vector points plus
-the embedded full-size image: the pipeline rasterises the bins/cells (ggrastr) and
-downsamples the image to ≤2500 px. *Example (IBD colon):* spatial QC PDFs drawn with
-vector points over the full hires image were 26–103 MB; rasterised with the downsampled
-image, a two-library PDF is ~4 MB.
+**Q: Which H&E is behind the spatial maps, and why are the PDFs so big?**
+Seurat's loader defaults to the lowres image. The pipeline draws capture-area pages over
+the full `tissue_hires_image.png` and strip pages over a crop of the original microscope
+scan (`plots$strip_um_per_px`, 0.8 µm by default), with every bin/cell as a vector dot.
+The embedded H&E is most of the file size. *Example (IBD colon):* a capture-area PDF is
+25–32 MB and a strip PDF ~10 MB. Raise `strip_um_per_px` for smaller files, lower it
+for more detail when zooming.
 
 **Q: `clustree` fails with "Unknown guide: edge_colourbar".**
 ggraph's edge guides aren't recognised by ggplot2 ≥ 4.0. `03_cluster` hides those

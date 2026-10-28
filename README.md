@@ -64,7 +64,7 @@ The same folders exist for `016um/` and `cells/`.
 
 ## Common tasks
 
-**Try a new dataset quickly** — run on 10% of each replicate, written to `output_test/`:
+**Try a new dataset quickly** — run on 10% of each replicate, written to `<output_dir>_test/`:
 ```bash
 bash run_pipeline.sh config.yaml -t 0.1
 ```
@@ -93,7 +93,8 @@ module purge && module load R/4.4.1
 Rscript /path/to/visium-hd-pipeline/steps/03_cluster.R config.yaml 8
 ```
 
-**Change QC thresholds** — one value for all bin sizes, or one per bin size:
+**Change QC thresholds** — one value for all bin sizes, or one per bin size
+(`max_mt_pct: 100` turns the mitochondrial filter off):
 ```yaml
 qc:
   min_counts: {"8": 50, "16": 100, cells: 50}
@@ -207,12 +208,12 @@ lsf:
 
 | Step | Does | Key outputs |
 |---|---|---|
-| **01** assign replicates | Finds each tissue piece and names it from the sample sheet | Assignment tables, overlay on the H&E |
+| **01** assign replicates | Finds each tissue piece and names it from the sample sheet | Assignment tables, overlay on the H&E, one H&E image per strip |
 | **02** load & QC | Loads bins/cells with the high-resolution H&E, adds sample-sheet columns, filters | `qc_report.html`, QC tables by group/sample/replicate, Space Ranger metrics, UMI-vs-genes plots, QC maps |
 | **03** cluster | Normalises, sketches, clusters at each resolution, projects to every bin | UMAPs (also split by condition), clustree, cluster make-up per replicate and condition, cluster maps |
 | **04** markers | Marker genes for each cluster, at each resolution | Marker tables, dot plot, heatmap |
 | **05** BANKSY | Spatial domains (expression + neighbourhood) | Domain labels and maps |
-| **06** pseudobulk DE | Condition comparison with replicates as the unit, whole tissue and per cluster | Results, summary, skip reasons, volcano, sample PCA and distance plots |
+| **06** pseudobulk DE | Condition comparison with replicates as the unit, whole tissue and per cluster | Results, summary, skip reasons, volcano, sample PCA (raw and donor-corrected) and distance plots |
 | **07** RCTD | Cell-type proportions from a single-cell reference | Weights, dominant type maps, composition |
 | **08** annotation | Applies your reviewed cluster labels | Label template, labelled maps, composition per replicate |
 | **09** pathways | Preranked enrichment (fgsea) from the DE statistics | Enrichment table, leading-edge genes, summary plots |
@@ -226,7 +227,7 @@ when no GMT file is given.
 
 ```text
 output/
-├── 01_assign_replicates/
+├── 01_assign_replicates/        strip_images/ holds the per-strip H&E
 ├── 008um/                       also 016um/ and cells/
 │   ├── 02_load_qc/              qc_report.html, figures/, tables/
 │   ├── 03_cluster/              shared UMAPs + clustree; res_<r>/ per resolution
@@ -246,8 +247,8 @@ used) and `sessionInfo.txt`.
 
 ## Requirements
 
-Minerva with the `R/4.4.1` module. The packages are already in the lab R library
-(`r_library` in the config). To rebuild the environment elsewhere:
+Minerva with the `R/4.4.1` and `gdal/3.9.1` modules (GDAL reads the original scan for
+strip pages). The R packages are already in the lab R library (`r_library` in the config). To rebuild the environment elsewhere:
 `renv::restore()` with the included `renv.lock`.
 
 ## More
