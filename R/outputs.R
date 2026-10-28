@@ -58,8 +58,10 @@ write_pseudobulk_diagnostics <- function(dds, metadata, cfg, label) {
               tab_path(cfg, paste0(prefix, '_variance.csv')))
     groups <- intersect(unique(c(cfg$de$condition_col, cfg$de$diagnostics$metadata_cols)), colnames(scores))
     for (group in groups) {
+      ref <- if (group == cfg$de$condition_col) cfg$de$reference              # control in grey
       p <- ggplot(scores, aes(PC1, PC2, colour = factor(.data[[group]]))) +
         geom_point(size = 3) +
+        scale_colour_manual(values = make_palette(sort_levels(scores[[group]]), reference = ref)) +
         ggrepel::geom_text_repel(aes(label = replicate_id), seed = cfg$seed, max.overlaps = Inf,
                                  box.padding = 0.5, point.padding = 0.4, size = 3, show.legend = FALSE) +
         scale_x_continuous(expand = expansion(mult = 0.2)) +

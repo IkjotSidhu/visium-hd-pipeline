@@ -97,7 +97,8 @@ ggsave(fig_path(cfg, 'clustree.png'), p_tree, width = 10, height = max(10, 0.65 
 # ---- UMAPs (all bins/cells, rasterised) ----
 md <- obj[[]] |> mutate(umap_1 = Embeddings(obj, umap_full)[, 1], umap_2 = Embeddings(obj, umap_full)[, 2])
 umap_plot <- function(col, label = FALSE) {
-  pal <- make_palette(levels(factor(md[[col]], levels = sort_levels(md[[col]]))))
+  ref <- if (col == cfg$de$condition_col) cfg$de$reference                  # control in grey
+  pal <- make_palette(levels(factor(md[[col]], levels = sort_levels(md[[col]]))), reference = ref)
   p <- ggplot(md, aes(umap_1, umap_2, colour = .data[[col]])) +
     ggrastr::rasterise(geom_point(size = 0.1, stroke = 0), dpi = 300) +
     scale_colour_manual(values = pal) +
@@ -165,7 +166,7 @@ for (r in cl$resolutions) {
       geom_col(position = position_dodge(width = 0.8), width = 0.75) +
       geom_point(data = rep_comp, aes(y = fraction, group = condition), colour = 'black', size = 1,
                  position = position_dodge(width = 0.8)) +
-      scale_fill_manual(values = make_palette(sort_levels(md[[cond]]))) +
+      scale_fill_manual(values = make_palette(sort_levels(md[[cond]]), reference = cfg$de$reference)) +
       labs(title = paste('Cluster composition by', cond, '- resolution', resolution_label(r)),
            subtitle = 'Bars: mean across replicates; dots: individual replicates',
            x = 'Cluster', y = 'Fraction of units', fill = cond) +

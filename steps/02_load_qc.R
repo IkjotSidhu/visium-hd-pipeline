@@ -144,7 +144,7 @@ qc_violin <- function(y, title, hline = NULL, log = FALSE) {
     theme_classic() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
   if (log) p <- p + scale_y_continuous(transform = scales::pseudo_log_trans(base = 10), breaks = c(0, 10, 100, 1000, 10000))  # handles 0 counts
-  if (!is.null(hline)) p <- p + geom_hline(yintercept = hline, linetype = 2, colour = 'red')
+  if (!is.null(hline)) p <- p + geom_hline(yintercept = hline, linetype = 2, colour = two_colours[2])
   p
 }
 p_dist <- qc_violin(count_col, 'UMIs', hline = min_counts, log = TRUE) |
@@ -158,7 +158,7 @@ qc_df$log10_umi <- log10(qc_df[[count_col]] + 1)
 qc_df$qc_status <- ifelse(qc_df$pass, 'pass', 'fail')
 save_plot_list(plot_spatial(qc_df, 'log10_umi', cfg, sheet, continuous = TRUE), cfg, 'qc_spatial_log10_umi')
 save_plot_list(plot_spatial(qc_df, 'percent.mt', cfg, sheet, continuous = TRUE, limits = c(0, 50)), cfg, 'qc_spatial_percent_mt')
-save_plot_list(plot_spatial(qc_df, 'qc_status', cfg, sheet, palette = c(pass = '#0072B2', fail = '#D55E00')), cfg, 'qc_spatial_status')
+save_plot_list(plot_spatial(qc_df, 'qc_status', cfg, sheet, palette = setNames(two_colours, c('pass', 'fail'))), cfg, 'qc_spatial_status')
 
 # ---- Filter + merge ----
 obj_list <- map(obj_list, function(o) {

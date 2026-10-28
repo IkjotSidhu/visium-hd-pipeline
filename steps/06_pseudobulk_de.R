@@ -191,7 +191,7 @@ if (!is.null(results_all$all_bins) && any(!is.na(results_all$all_bins$padj))) {
   p_v <- ggplot(vdf, aes(log2FoldChange, -log10(pvalue), colour = class)) +
     ggrastr::rasterise(geom_point(size = 0.6), dpi = 300) +
     geom_text(data = lab, aes(label = gene), size = 2.5, colour = 'black', vjust = -0.6, check_overlap = TRUE) +
-    scale_colour_manual(values = c('padj < 0.05, consistent' = '#B2182B', 'padj < 0.05' = '#F4A582', 'n.s.' = 'grey75')) +
+    scale_colour_manual(values = c('padj < 0.05, consistent' = highlight[['sig']], 'padj < 0.05' = highlight[['weak']], 'n.s.' = highlight[['ns']])) +
     facet_wrap(~ contrast) +
     labs(title = 'Pseudobulk DE - whole tissue', subtitle = unique(vdf$design), colour = NULL) +
     theme_classic()

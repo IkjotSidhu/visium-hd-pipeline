@@ -363,19 +363,40 @@ read_sample_sheet <- function(cfg) {
 spatial_dir <- function(sr_dir) file.path(sr_dir, 'binned_outputs/square_008um/spatial')
 
 # ---- Palettes ----
-# Okabe-Ito first (colourblind-safe), then extra distinct hues for larger sets
+# Lab standard swatches (Development/ColorPalettes.pdf). make_palette() uses the
+# smallest swatch that fits; past 18 groups it continues with categorical_palette.
+lab_swatches <- list(
+  s3 = c('#237D26', '#FCAF17', '#DC217D', '#6786C4'),                                   # 4, colourblind friendly
+  s4 = c('#682E88', '#BFA58A', '#F28500', '#27B14B', '#025A48', '#8DCBEF', '#C355A0', '#791316'),
+  s1 = c('#B6DEF6', '#6FAB43', '#FDD700', '#8151A1', '#FAA51A', '#AFD243', '#595A5A', '#D3B081',
+         '#4B5DAA', '#ED2224', '#A8703D', '#A290AA'),
+  s6 = c('#38A12B', '#FFC81C', '#C355A0', '#5570B6', '#8DCBEF', '#AD96C7', '#CC843D', '#682E88',
+         '#DF6FA1', '#F27549', '#7F8080', '#CBDF7A', '#DCE3E2'),
+  s2 = c('#8DCBEF', '#5570B6', '#CC843D', '#AD96C7', '#EB2627', '#7F8080', '#DEBEB4', '#682E88', '#791316',
+         '#C355A0', '#FFC81C', '#27B14B', '#8B5B2C', '#838B8A', '#025A48', '#BFCCCA', '#F27549', '#CBDF7A'))
+two_colours  <- c('#5570B6', '#EB2627')   # swatch 5 "bright": any two groups
+ctrl_treated <- c('#999999', '#C2000B')   # swatch 5 "ctrl vs treated": reference first
+highlight    <- c(ns = '#999999', sig = '#C2000B', weak = '#FEA621')   # swatch 7 (significance highlights)
+
+# Fallback past the lab swatches: Okabe-Ito, then tab10/tab20 hues
 categorical_palette <- c('#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9', '#F0E442', '#332288',
                          '#8C564B', '#7F7F7F', '#BCBD22', '#17BECF', '#AEC7E8', '#FFBB78', '#98DF8A', '#FF9896',
                          '#C5B0D5', '#C49C94', '#F7B6D2', '#DBDB8D', '#9EDAE5', '#393B79', '#637939', '#8C6D31',
                          '#843C39', '#7B4173', '#3182BD', '#E6550D', '#31A354', '#756BB1', '#636363', '#FD8D3C',
                          '#74C476', '#9E9AC8', '#FDAE6B', '#A1D99B', '#BCBDDC', '#D6616B', '#E7969C', '#CE6DBD')
 
-# Named colour vector in a fixed order (levels keep their position across plots)
-make_palette <- function(levels) {
+# Named colour vector in level order. With a reference level (e.g. the DE
+# control) two groups get grey for the reference and red for the other.
+make_palette <- function(levels, reference = NULL) {
   levels <- as.character(levels)
-  # Beyond the hand-picked set (e.g. resolution 2 clusterings), interpolate - neighbours get less distinct
-  cols <- if (length(levels) <= length(categorical_palette)) categorical_palette[seq_along(levels)] else
-    grDevices::colorRampPalette(categorical_palette)(length(levels))
+  n <- length(levels)
+  if (n == 2 && !is.null(reference) && reference %in% levels)
+    return(setNames(ctrl_treated, c(reference, setdiff(levels, reference))))
+  pool <- if (n == 2) two_colours else
+    Find(\(s) length(s) >= n, lab_swatches[c('s3', 's4', 's1', 's6', 's2')]) %||%
+    c(lab_swatches$s2, setdiff(categorical_palette, lab_swatches$s2))   # past 18: lab swatch, then fallback
+  # Beyond every listed colour, interpolate - neighbours get less distinct
+  cols <- if (n <= length(pool)) pool[seq_len(n)] else grDevices::colorRampPalette(pool)(n)
   setNames(cols, levels)
 }
 

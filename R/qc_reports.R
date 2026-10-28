@@ -312,12 +312,12 @@ write_qc_relationship_plots <- function(qc_df, cfg, count_col, feature_col) {
         if (!is.null(cfg$test_fraction)) paste0('\nTest run: ', 100 * cfg$test_fraction, '% selected before QC.') else '',
         if (status != 'ok') paste0('\n', status, '.') else '')
       p <- ggplot(display, aes(umi, genes)) +
-        geom_point(size = 0.65, alpha = 0.22, colour = '#225f9c') +
+        geom_point(size = 0.65, alpha = 0.22, colour = two_colours[1]) +
         labs(title = paste(label, '-', if (cfg$bin_size == 'cells') 'cells' else paste0(as.integer(cfg$bin_size), ' µm bins')),
              subtitle = subtitle, x = 'UMIs per bin/cell', y = 'Detected genes per bin/cell', caption = caption) +
         theme_classic(base_size = 12) +
         theme(plot.caption = element_text(hjust = 0))
-      if (!is.null(fit)) p <- p + geom_abline(intercept = intercept, slope = slope, colour = '#c54627', linewidth = 0.8)
+      if (!is.null(fit)) p <- p + geom_abline(intercept = intercept, slope = slope, colour = two_colours[2], linewidth = 0.8)
 
       # Save PNG + PDF; record the fit
       stem <- paste0('umi_genes/', level, '_', sprintf('%03d', i), '_', stage)

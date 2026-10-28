@@ -77,7 +77,7 @@ if (is.null(settings$gmt_file)) {
         top <- fit |> filter(is.finite(NES), !is.na(padj)) |> slice_min(padj, n = 20, with_ties = FALSE)
         if (nrow(top)) {
           p <- ggplot(top, aes(NES, reorder(pathway, NES), colour = padj < 0.05, size = size)) +
-            geom_point() + scale_colour_manual(values = c('TRUE' = '#B2182B', 'FALSE' = 'grey60')) +
+            geom_point() + scale_colour_manual(values = c('TRUE' = highlight[['sig']], 'FALSE' = highlight[['ns']])) +
             theme_classic() + labs(title = paste('Pathway enrichment:', sub, comparison),
               subtitle = 'Shown by FDR rank; colours distinguish FDR < 0.05', y = NULL, colour = 'FDR < 0.05')
           stem <- paste0('pathway_', i)
