@@ -518,7 +518,7 @@ write_strip_images <- function(cfg, extents, sheet) {
 
     # Original scan via GDAL (reads only this window), downsampled to the target resolution
     f <- cfg$plots$strip_um_per_px / hi$sf$microns_per_pixel             # fullres pixels per output pixel
-    ok <- !is.null(scan) && system2('bash', c('-lc', shQuote(paste(cfg$plots$gdal_setup, '&& gdal_translate -q -of PNG -b 1 -b 2 -b 3 -r average',
+    ok <- !is.null(scan) && system2('bash', c('-lc', shQuote(paste(cfg$plots$gdal_setup, '&& GDAL_PAM_ENABLED=NO gdal_translate -q -of PNG -b 1 -b 2 -b 3 -r average',
       '-srcwin', x0, y0, w, h, '-outsize', round(w / f), round(h / f), shQuote(scan), shQuote(path))))) == 0
     if (ok) {
       source <- scan
