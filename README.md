@@ -54,7 +54,7 @@ and every figure, for all bin sizes.
 | `output/01_assign_replicates/figures/replicate_assignment_*.png` | Each tissue piece got the right replicate name |
 | `output/008um/02_load_qc/qc_report.html` | How many bins each group, sample and replicate kept, and why bins were removed |
 | `output/008um/03_cluster/figures/umap_metadata_donor.png` | Donors mix after batch correction |
-| `output/008um/03_cluster/res_1.0/figures/spatial_clusters_*.png` | Clusters on the H&E |
+| `output/008um/03_cluster/res_1.0/figures/spatial_clusters_*.png` | Clusters on the H&E, per capture area and per strip |
 | `output/008um/04_markers/res_1.0/tables/top10_markers_*.csv` | Marker genes for naming clusters |
 | `output/008um/06_pseudobulk_de/tables/pseudobulk_de_status.csv` | Which comparisons were tested, and why any were skipped |
 
@@ -116,13 +116,17 @@ clustering:
   main_resolution: 1            # used for DE and pathways
 ```
 
-**Spatial plots** — every bin or cell is drawn as a dot (vector in the PDFs) over the
-full-resolution H&E. To change the look:
+**Spatial plots** — every bin or cell is drawn as a dot (vector in the PDFs) over the H&E,
+once per capture area (`<plot>_<library_id>`) and once per tissue strip (`<plot>_<replicate_id>`).
+Strip pages use the original microscope scan when Space Ranger's `--image` file is inside the
+Space Ranger folder, otherwise the hires image. Continuous maps (UMIs, mitochondrial %) use a
+linear colour scale from 0 to the 99th percentile. To change the look:
 ```yaml
 plots:
   image_alpha: 1                # H&E strength (1 = full, lower fades toward white)
   dpi: 300                      # PNG resolution
   point_size: null              # null = one bin wide; or a fixed size
+  strip_um_per_px: 0.8          # H&E resolution of strip pages (smaller = sharper, larger files)
 ```
 
 **Batch correction** — Harmony runs automatically when the sample sheet has more than one

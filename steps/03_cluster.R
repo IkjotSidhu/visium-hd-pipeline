@@ -195,9 +195,8 @@ for (r in cl$resolutions) {
     n_single <- sum(donor_mix$max_donor_frac > 0.95)
   }
   md_sp <- md |> mutate(across(all_of(column), as.character))
-  save_plot_list(plot_spatial(md_sp, column, current, sheet,
-      palette = make_palette(levels(obj[[column]][, 1])), title_prefix = paste('Resolution', resolution_label(r)), width = 10, height = 9),
-    current, 'spatial_clusters', width = 10, height = 9)
+  save_spatial(md_sp, column, current, sheet, 'spatial_clusters', palette = make_palette(levels(obj[[column]][, 1])),
+               title_prefix = paste('Resolution', resolution_label(r)), width = 10, height = 9)
   summary_rows[[resolution_label(r)]] <- tibble(clustering_resolution = r,
     n_clusters = nlevels(obj[[column]][, 1]), n_units = nrow(md), clusters_gt95pct_one_donor = n_single,
     folder = paste0('res_', resolution_label(r)))

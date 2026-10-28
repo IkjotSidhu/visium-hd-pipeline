@@ -80,6 +80,7 @@ detect_pieces <- function(pos, n_reps, lib) {
 # ---- Per library ----
 summary_rows  <- list()
 overlay_plots <- list()
+strip_extents <- list()
 for (lib in unique(sheet$library_id)) {
   lib_rows <- sheet |> filter(library_id == lib)          # sample-sheet order = layout order
   sr_dir   <- lib_rows$spaceranger_dir[1]
@@ -128,6 +129,11 @@ for (lib in unique(sheet$library_id)) {
     full_join(count(cells, replicate_id, name = 'cells'), by = 'replicate_id') |>
     mutate(library_id = lib, .before = 1)
 
+  # Bounding box of each strip's 8 um bins (fullres pixels), for the per-strip H&E images
+  strip_extents[[lib]] <- bins_008 |> filter(!is.na(replicate_id)) |>
+    summarise(library_id = lib, xmin = min(pxl_col_in_fullres), xmax = max(pxl_col_in_fullres),
+              ymin = min(pxl_row_in_fullres), ymax = max(pxl_row_in_fullres), .by = replicate_id)
+
   # ---- QC overlay: assignment over the H&E ----
   md <- bins_008 |>
     transmute(library_id, x_fullres = pxl_col_in_fullres, y_fullres = pxl_row_in_fullres,
@@ -140,6 +146,9 @@ for (lib in unique(sheet$library_id)) {
 
 # One PDF + PNG per library: replicate_assignment_<library>.pdf/.png
 save_plot_list(overlay_plots, cfg, 'replicate_assignment')
+
+# ---- Per-strip H&E images for later spatial maps (strip_images/) ----
+write_strip_images(cfg, bind_rows(strip_extents), sheet)
 
 # ---- Summary ----
 summary_tbl <- bind_rows(summary_rows)

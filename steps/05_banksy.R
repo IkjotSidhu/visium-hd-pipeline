@@ -56,8 +56,8 @@ for (col in setdiff(colnames(labels), 'cell')) {
   r <- as.numeric(sub('.*_res_', '', col))
   current <- resolution_cfg(cfg, r)
   write_csv(md |> select(cell, library_id, replicate_id, all_of(col)), tab_path(current, paste0(col, '.csv.gz')))
-  save_plot_list(plot_spatial(md, col, current, sheet, palette = make_palette(sort_levels(md[[col]])), width = 10, height = 9),
-                 current, paste0('spatial_', col), width = 10, height = 9)
+  save_spatial(md, col, current, sheet, paste0('spatial_', col), palette = make_palette(sort_levels(md[[col]])),
+               width = 10, height = 9)
 }
 
 step_finish(cfg)

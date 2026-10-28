@@ -154,11 +154,11 @@ ggsave(fig_path(cfg, 'qc_violins.pdf'), p_dist, width = 13, height = 5)
 ggsave(fig_path(cfg, 'qc_violins.png'), p_dist, width = 13, height = 5, dpi = 100)
 
 # ---- Spatial QC (before filtering) ----
-qc_df$log10_umi <- log10(qc_df[[count_col]] + 1)
+# Raw values on a linear colour scale from 0 to the 99th percentile (higher values shown at the cap)
 qc_df$qc_status <- ifelse(qc_df$pass, 'pass', 'fail')
-save_plot_list(plot_spatial(qc_df, 'log10_umi', cfg, sheet, continuous = TRUE), cfg, 'qc_spatial_log10_umi')
-save_plot_list(plot_spatial(qc_df, 'percent.mt', cfg, sheet, continuous = TRUE, limits = c(0, 50)), cfg, 'qc_spatial_percent_mt')
-save_plot_list(plot_spatial(qc_df, 'qc_status', cfg, sheet, palette = setNames(two_colours, c('pass', 'fail'))), cfg, 'qc_spatial_status')
+save_spatial(qc_df, count_col, cfg, sheet, 'qc_spatial_umi', continuous = TRUE, label = 'UMIs')
+save_spatial(qc_df, 'percent.mt', cfg, sheet, 'qc_spatial_percent_mt', continuous = TRUE, label = 'Mitochondrial %')
+save_spatial(qc_df, 'qc_status', cfg, sheet, 'qc_spatial_status', palette = setNames(two_colours, c('pass', 'fail')))
 
 # ---- Filter + merge ----
 obj_list <- map(obj_list, function(o) {

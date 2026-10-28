@@ -136,7 +136,7 @@ env$create.RCTD <- function(puck, ...) {
 }
 env$run.RCTD <- function(rctd, ...) rctd
 env$normalize_weights <- identity
-env$plot_spatial <- function(...) list()
+env$save_spatial <- function(...) invisible(NULL)
 env$save_plot_list <- function(...) invisible(NULL)
 expressions <- as.list(parse('steps/07_rctd.R'))[-1]
 run_fixture <- function() for (expr in expressions) eval(expr, env)

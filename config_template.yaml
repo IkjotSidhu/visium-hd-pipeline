@@ -116,6 +116,9 @@ plots:
   dpi: 300                      # PNG resolution (PDFs are vector: every bin/cell is a dot)
   point_size: null              # null = each dot is one bin wide; set a number to override
   cell_diameter_um: 10          # dot size for segmented cells when point_size is null
+  strip_um_per_px: 0.8          # per-strip maps: H&E resolution, cut from the original scan when available
+  strip_height: 12              # per-strip maps: page height (inches)
+  gdal_setup: module load gdal/3.9.1   # command that makes gdal_translate available
 
 # LSF (Minerva). Resources per step: cores, memory PER CORE (MB), walltime.
 # Defaults suit ~100k 8 um bins; raise for bigger datasets.

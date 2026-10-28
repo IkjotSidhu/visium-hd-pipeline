@@ -83,9 +83,8 @@ run_annotation <- function(cfg) {
          x = NULL, y = 'Fraction of retained units', fill = 'Broad type')
   ggsave(fig_path(cfg, 'annotation_composition.png'), p, width = 10, height = 7, dpi = 100)
   ggsave(fig_path(cfg, 'annotation_composition.pdf'), p, width = 10, height = 7)
-  save_plot_list(plot_spatial(md, 'broad_type', cfg, sheet, palette = palette,
-                              title_prefix = paste('Resolution', resolution_label(cfg$cluster_resolution))),
-                 cfg, 'spatial_broad_type')
+  save_spatial(md, 'broad_type', cfg, sheet, 'spatial_broad_type', palette = palette,
+               title_prefix = paste('Resolution', resolution_label(cfg$cluster_resolution)))
 
   step_finish(cfg)                                              # res_<r>/params_used.yaml
 }

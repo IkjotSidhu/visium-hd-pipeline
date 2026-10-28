@@ -65,7 +65,7 @@ cfg$annotation$mapping_files <- list('8' = path)
 env <- new.env(parent = globalenv()); env$step_setup <- function(...) cfg
 env$read_step_rds <- function(...) fixture
 env$read_sample_sheet <- function(...) tibble(replicate_id = c('R1', 'R2'), library_id = 'L1', spaceranger_dir = root)
-env$plot_spatial <- function(...) list(); env$save_plot_list <- function(...) invisible(NULL)
+env$save_spatial <- function(...) invisible(NULL)
 for (expr in as.list(parse('steps/08_annotation.R'))[-1]) eval(expr, env)
 current <- resolution_cfg(cfg, 1, create = FALSE)
 units <- read_csv(tab_path(current, 'unit_annotations.csv.gz'), show_col_types = FALSE)

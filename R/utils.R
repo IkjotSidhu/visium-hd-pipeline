@@ -69,7 +69,9 @@ default_config <- list(
     max_cores      = 4
   ),
   plots = list(image_alpha = 1,   width = 8, height = 8, dpi = 300,   # PNG resolution
-               point_size = NULL, cell_diameter_um = 10),   # NULL = dots sized to one bin / cell
+               point_size = NULL, cell_diameter_um = 10,     # NULL = dots sized to one bin / cell
+               strip_um_per_px = 0.8, strip_height = 12,     # per-strip maps: H&E resolution, page height (in)
+               gdal_setup = 'module load gdal/3.9.1'),       # makes gdal_translate available (reads the original scan)
   lsf = list(
     project = 'acc_naiklab', queue = 'premium',
     resources = list(                     # cores / memory per core (MB) / walltime per step
@@ -407,10 +409,12 @@ sort_levels <- function(x) {
 }
 
 # ---- Spatial plotting ----
-# Full hires H&E (dimmed) with every bin/cell drawn on top as a vector dot, so
-# individual spots stay sharp at any zoom. Uses x_fullres / y_fullres /
-# library_id from metadata, so it works the same for bins and segmented cells.
-# Returns one ggplot per library.
+# Every bin/cell is drawn as a vector dot over the H&E, so spots stay sharp at
+# any zoom. Positions come from x_fullres / y_fullres / library_id, so bins and
+# segmented cells work the same. Two layouts:
+#   plot_spatial()        - one page per capture area, over Space Ranger's hires image
+#   plot_spatial_strips() - one page per replicate strip, over a crop of the
+#                           original scan written by step 01 (write_strip_images)
 .image_cache <- new.env()
 load_hires <- function(sr_dir) {
   key <- normalizePath(sr_dir)
@@ -422,8 +426,46 @@ load_hires <- function(sr_dir) {
   .image_cache[[key]]
 }
 
+# Colour limits for continuous maps: 0 to the 99th percentile on a linear scale,
+# so a few extreme bins don't flatten the rest; values above are shown at the cap
+spatial_limits <- function(x) c(0, unname(quantile(x, 0.99, na.rm = TRUE)))
+
+# One panel: img spans x0..x1, y0..y1 in image pixels (y negated); df has px/py in
+# the same pixels. unit_px = one bin (or cell) in image pixels sets the dot size.
+spatial_panel <- function(df, img, x0, x1, y0, y1, unit_px, color_by, cfg, width, height, title,
+                          palette = NULL, continuous = FALSE, limits = NULL, label = color_by) {
+  img <- img * cfg$plots$image_alpha + (1 - cfg$plots$image_alpha)   # 1 = H&E as scanned; lower fades toward white
+
+  # Dot diameter = one bin, converted to mm on the page. The panel is roughly the
+  # page minus legend/title; ggplot point size ~ diameter / 0.75 mm.
+  mm_per_px <- min((width * 25.4 - 40) / (x1 - x0), (height * 25.4 - 15) / (y1 - y0))
+  size <- cfg$plots$point_size %||% (0.9 * unit_px * mm_per_px / 0.75)
+
+  p <- ggplot(df, aes(px, py, colour = .data[[color_by]])) +
+    annotation_raster(img, xmin = x0, xmax = x1, ymin = -y1, ymax = -y0) +
+    geom_point(shape = 16, size = size, stroke = 0) +
+    coord_fixed(xlim = c(x0, x1), ylim = c(-y1, -y0), expand = FALSE) +
+    labs(title = title, x = NULL, y = NULL) +
+    theme_void() +
+    theme(plot.background = element_rect(fill = 'white', colour = NA))
+
+  if (continuous) {
+    # Sequential, light-low (Blues), linear; capped values noted in the legend
+    p + scale_colour_gradientn(colours = RColorBrewer::brewer.pal(9, 'Blues'), limits = limits, oob = scales::squish,
+                               name = paste0(label, '\n(capped at ', signif(limits[2], 3), ')'))
+  } else {
+    p + scale_colour_manual(values = palette, breaks = names(palette), name = label,
+                            guide = guide_legend(override.aes = list(size = 3)))
+  }
+}
+
+# Unit (bin / cell) size in micrometres for dot sizing
+unit_um <- function(cfg) if (cfg$res_label == 'cells') cfg$plots$cell_diameter_um else as.numeric(cfg$bin_size)
+
 plot_spatial <- function(md, color_by, cfg, sheet, palette = NULL, continuous = FALSE,
-                         limits = NULL, title_prefix = NULL, width = cfg$plots$width, height = cfg$plots$height) {
+                         limits = NULL, title_prefix = NULL, label = color_by,
+                         width = cfg$plots$width, height = cfg$plots$height) {
+  if (continuous && is.null(limits)) limits <- spatial_limits(md[[color_by]])
   lib_dirs <- sheet |> distinct(library_id, spaceranger_dir)
   map(set_names(lib_dirs$library_id), function(lib) {
     hi <- load_hires(lib_dirs$spaceranger_dir[lib_dirs$library_id == lib])
@@ -434,44 +476,104 @@ plot_spatial <- function(md, color_by, cfg, sheet, palette = NULL, continuous = 
       filter(library_id == lib) |>
       mutate(px = x_fullres * sc, py = -y_fullres * sc)
 
-    # Crop the H&E to the plotted tissue (+ margin) so only that part is embedded, then dim it
+    # Crop the H&E to the plotted tissue (+ margin) so only that part is embedded
     m  <- 50
     x0 <- max(1, floor(min(df$px) - m));  x1 <- min(dim(hi$img)[2], ceiling(max(df$px) + m))
     y0 <- max(1, floor(-max(df$py) - m)); y1 <- min(dim(hi$img)[1], ceiling(-min(df$py) + m))
-    img <- hi$img[y0:y1, x0:x1, 1:3]
-    img <- img * cfg$plots$image_alpha + (1 - cfg$plots$image_alpha)   # 1 = H&E as scanned; lower fades toward white
-
-    # Dot diameter = one bin (cells: cfg$plots$cell_diameter_um), converted to mm on the
-    # page. The panel is roughly the page minus legend/title; ggplot point size ~ diameter / 0.75 mm.
-    unit_um <- if (cfg$res_label == 'cells') cfg$plots$cell_diameter_um else as.numeric(cfg$bin_size)
-    unit_px <- unit_um / hi$sf$microns_per_pixel * sc
-    mm_per_px <- min((width * 25.4 - 40) / (x1 - x0), (height * 25.4 - 15) / (y1 - y0))
-    size <- cfg$plots$point_size %||% (0.9 * unit_px * mm_per_px / 0.75)
-
-    p <- ggplot(df, aes(px, py, colour = .data[[color_by]])) +
-      annotation_raster(img, xmin = x0 - 1, xmax = x1, ymin = -y1, ymax = -(y0 - 1)) +
-      geom_point(shape = 16, size = size, stroke = 0) +
-      coord_fixed(xlim = c(x0 - 1, x1), ylim = c(-y1, -(y0 - 1)), expand = FALSE) +
-      labs(title = paste(c(title_prefix, lib), collapse = ' - '), x = NULL, y = NULL) +
-      theme_void() +
-      theme(plot.background = element_rect(fill = 'white', colour = NA))
-
-    if (continuous) {
-      # Sequential, light-low (Blues): low values recede into the tissue
-      p + scale_colour_gradientn(colours = RColorBrewer::brewer.pal(9, 'Blues'), limits = limits,
-                                 oob = scales::squish, name = color_by)
-    } else {
-      p + scale_colour_manual(values = palette, breaks = names(palette), name = color_by,
-                              guide = guide_legend(override.aes = list(size = 3)))
-    }
+    spatial_panel(df, hi$img[y0:y1, x0:x1, 1:3], x0 - 1, x1, y0 - 1, y1,
+                  unit_um(cfg) / hi$sf$microns_per_pixel * sc, color_by, cfg, width, height,
+                  paste(c(title_prefix, lib), collapse = ' - '), palette, continuous, limits, label)
   })
 }
 
-# Save each plot in a list (e.g. one per sample/library) as its own PDF and PNG: <stem>_<name>.pdf/.png
+# ---- Per-strip H&E images (written once by step 01) ----
+strip_image_dir <- function(cfg) file.path(cfg$output_dir, '01_assign_replicates', 'strip_images')
+
+# Original microscope scan given to spaceranger --image, if a copy is inside the
+# Space Ranger folder (the original path is often not readable)
+find_scan <- function(sr_dir) {
+  cmd <- file.path(sr_dir, '_cmdline')
+  if (!file.exists(cmd)) return(NULL)
+  image <- regmatches(readLines(cmd, warn = FALSE), regexpr('--image=[^ ]+', readLines(cmd, warn = FALSE)))
+  if (!length(image)) return(NULL)
+  hits <- list.files(sr_dir, pattern = paste0('^', basename(sub('--image=', '', image[1])), '$'),
+                     recursive = TRUE, full.names = TRUE)
+  if (length(hits)) hits[1] else NULL
+}
+
+# Cut each strip (bounding box of its bins + margin) out of the original scan at
+# plots$strip_um_per_px with gdal_translate; without a scan (or GDAL), crop the
+# hires image instead. Records where each crop sits in fullres pixels.
+write_strip_images <- function(cfg, extents, sheet) {
+  out <- strip_image_dir(cfg)
+  dir.create(out, recursive = TRUE, showWarnings = FALSE)
+  rows <- pmap(extents, function(replicate_id, library_id, xmin, xmax, ymin, ymax) {
+    sr_dir <- sheet$spaceranger_dir[sheet$library_id == library_id][1]
+    hi     <- load_hires(sr_dir)
+    m      <- 150                                                        # margin, fullres pixels
+    x0 <- max(0, floor(xmin - m)); y0 <- max(0, floor(ymin - m))
+    w  <- ceiling(xmax + m) - x0;  h  <- ceiling(ymax + m) - y0
+    path <- file.path(out, paste0(replicate_id, '.png'))
+    scan <- find_scan(sr_dir)
+
+    # Original scan via GDAL (reads only this window), downsampled to the target resolution
+    f <- cfg$plots$strip_um_per_px / hi$sf$microns_per_pixel             # fullres pixels per output pixel
+    ok <- !is.null(scan) && system2('bash', c('-lc', shQuote(paste(cfg$plots$gdal_setup, '&& gdal_translate -q -of PNG -b 1 -b 2 -b 3 -r average',
+      '-srcwin', x0, y0, w, h, '-outsize', round(w / f), round(h / f), shQuote(scan), shQuote(path))))) == 0
+    if (ok) {
+      source <- scan
+    } else {
+      # Fallback: crop of Space Ranger's hires image
+      log_msg(cfg, replicate_id, ': original scan not available, using the hires image')
+      sc  <- hi$sf$tissue_hires_scalef
+      cx0 <- max(1, floor(x0 * sc) + 1); cy0 <- max(1, floor(y0 * sc) + 1)
+      cx1 <- min(dim(hi$img)[2], ceiling((x0 + w) * sc)); cy1 <- min(dim(hi$img)[1], ceiling((y0 + h) * sc))
+      png::writePNG(hi$img[cy0:cy1, cx0:cx1, 1:3], path)
+      x0 <- (cx0 - 1) / sc; y0 <- (cy0 - 1) / sc; w <- (cx1 - cx0 + 1) / sc
+      source <- 'tissue_hires_image.png'
+    }
+    img_w <- dim(png::readPNG(path, info = FALSE))[2]
+    tibble(replicate_id, library_id, x0, y0, fullres_per_px = w / img_w, image = basename(path), source)
+  })
+  write_csv(bind_rows(rows), file.path(out, 'strip_images.csv'))
+}
+
+plot_spatial_strips <- function(md, color_by, cfg, sheet, palette = NULL, continuous = FALSE,
+                                limits = NULL, title_prefix = NULL, label = color_by, height = cfg$plots$strip_height) {
+  index <- file.path(strip_image_dir(cfg), 'strip_images.csv')
+  if (!file.exists(index)) return(list())
+  strips <- read_csv(index, show_col_types = FALSE) |>
+    filter(replicate_id %in% md$replicate_id, !replicate_id %in% sheet$library_id)   # no name clash with capture-area pages
+  if (continuous && is.null(limits)) limits <- spatial_limits(md[[color_by]])
+  plots <- pmap(strips, function(replicate_id, library_id, x0, y0, fullres_per_px, image, source) {
+    img <- png::readPNG(file.path(strip_image_dir(cfg), image))
+    mpp <- load_hires(sheet$spaceranger_dir[sheet$library_id == library_id][1])$sf$microns_per_pixel
+    df  <- md[md$replicate_id == replicate_id, ] |>
+      mutate(px = (x_fullres - x0) / fullres_per_px, py = -(y_fullres - y0) / fullres_per_px)
+    # Page shaped like the strip, plus room for the legend
+    width <- min(14, max(5, height * dim(img)[2] / dim(img)[1] + 2.5))
+    p <- spatial_panel(df, img, 0, dim(img)[2], 0, dim(img)[1], unit_um(cfg) / mpp / fullres_per_px,
+                       color_by, cfg, width, height, paste(c(title_prefix, replicate_id), collapse = ' - '),
+                       palette, continuous, limits, label)
+    attr(p, 'page') <- c(width, height)                                  # save_plot_list uses this page size
+    p
+  })
+  set_names(plots, strips$replicate_id)
+}
+
+# Capture-area pages plus one page per replicate strip, as <stem>_<library or replicate>.pdf/.png
+save_spatial <- function(md, color_by, cfg, sheet, stem, ..., width = cfg$plots$width, height = cfg$plots$height) {
+  save_plot_list(plot_spatial(md, color_by, cfg, sheet, ..., width = width, height = height), cfg, stem, width, height)
+  save_plot_list(plot_spatial_strips(md, color_by, cfg, sheet, ...), cfg, stem)
+}
+
+# Save each plot in a list (e.g. one per sample/library) as its own PDF and PNG: <stem>_<name>.pdf/.png.
+# A plot carrying a 'page' attribute (width, height) is saved at that size.
 save_plot_list <- function(plots, cfg, stem, width = cfg$plots$width, height = cfg$plots$height) {
   iwalk(plots, function(p, nm) {
-    ggsave(fig_path(cfg, paste0(stem, '_', nm, '.pdf')), p, width = width, height = height)
-    ggsave(fig_path(cfg, paste0(stem, '_', nm, '.png')), p, width = width, height = height, dpi = cfg$plots$dpi)
+    page <- attr(p, 'page') %||% c(width, height)
+    ggsave(fig_path(cfg, paste0(stem, '_', nm, '.pdf')), p, width = page[1], height = page[2])
+    ggsave(fig_path(cfg, paste0(stem, '_', nm, '.png')), p, width = page[1], height = page[2], dpi = cfg$plots$dpi)
   })
 }
 
