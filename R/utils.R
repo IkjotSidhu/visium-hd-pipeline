@@ -68,7 +68,7 @@ default_config <- list(
     mode           = 'doublet',
     max_cores      = 4
   ),
-  plots = list(image_alpha = 0.4, width = 8, height = 8, dpi = 300,   # PNG resolution
+  plots = list(image_alpha = 1,   width = 8, height = 8, dpi = 300,   # PNG resolution
                point_size = NULL, cell_diameter_um = 10),   # NULL = dots sized to one bin / cell
   lsf = list(
     project = 'acc_naiklab', queue = 'premium',
@@ -418,7 +418,7 @@ plot_spatial <- function(md, color_by, cfg, sheet, palette = NULL, continuous = 
     x0 <- max(1, floor(min(df$px) - m));  x1 <- min(dim(hi$img)[2], ceiling(max(df$px) + m))
     y0 <- max(1, floor(-max(df$py) - m)); y1 <- min(dim(hi$img)[1], ceiling(-min(df$py) + m))
     img <- hi$img[y0:y1, x0:x1, 1:3]
-    img <- img * cfg$plots$image_alpha + (1 - cfg$plots$image_alpha)   # blend toward white = dim
+    img <- img * cfg$plots$image_alpha + (1 - cfg$plots$image_alpha)   # 1 = H&E as scanned; lower fades toward white
 
     # Dot diameter = one bin (cells: cfg$plots$cell_diameter_um), converted to mm on the
     # page. The panel is roughly the page minus legend/title; ggplot point size ~ diameter / 0.75 mm.

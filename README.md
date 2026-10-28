@@ -120,7 +120,7 @@ clustering:
 full-resolution H&E. To change the look:
 ```yaml
 plots:
-  image_alpha: 0.4              # H&E dimming (0 = hidden, 1 = full)
+  image_alpha: 1                # H&E strength (1 = full, lower fades toward white)
   dpi: 300                      # PNG resolution
   point_size: null              # null = one bin wide; or a fixed size
 ```
