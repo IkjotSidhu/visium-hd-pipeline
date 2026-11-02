@@ -43,6 +43,8 @@ default_config <- list(
                   gene_id_type = 'symbol', min_size = 15, max_size = 500, eps = 1e-10),
   report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
+  spotsweeper = list(run = TRUE, metrics = c('umi', 'genes', 'mito'),   # step 02: label (not remove) local outliers
+                     n_neighbors = 36, cutoff = 2.5),
   banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = (1:20) / 10, pca_dims = 30),
   de = list(
     run            = TRUE,
@@ -99,6 +101,7 @@ load_config <- function(config_path, bin_size = NULL) {
 
   cfg$clustering$resolutions <- unlist(cfg$clustering$resolutions)
   cfg$banksy$resolutions <- unlist(cfg$banksy$resolutions)
+  cfg$spotsweeper$metrics <- unlist(cfg$spotsweeper$metrics)
 
   # The resolution this step runs at (passed by run_pipeline.sh); defaults to the first listed
   cfg$bin_size <- as.character(bin_size %||% cfg$bin_sizes[[1]])
@@ -341,6 +344,15 @@ rds_dir  <- function(cfg) file.path(cfg$output_dir, cfg$res_label, 'rds')
 rds_path <- function(cfg, step) {
   suffix <- if (step == '08_annotation' && !is.null(cfg$cluster_resolution)) paste0('_res_', resolution_label(cfg$cluster_resolution)) else ''
   file.path(rds_dir(cfg), paste0(step, suffix, '.rds'))
+}
+# SpotSweeper flag labels, in plotting order (same colours in step 02 maps and step 03 bars)
+spotsweeper_labels <- c(umi = 'low UMIs', genes = 'low genes', mito = 'high mito %')
+
+# Secondary QC (SpotSweeper) output, kept apart from the main step folders: <res>/secondary_qc/
+secondary_qc_cfg <- function(cfg) {
+  cfg$step_dir <- file.path(cfg$output_dir, cfg$res_label, 'secondary_qc')
+  for (d in c('figures', 'tables')) dir.create(file.path(cfg$step_dir, d), recursive = TRUE, showWarnings = FALSE)
+  cfg
 }
 fig_path <- function(cfg, file) file.path(cfg$step_dir, 'figures', file)
 tab_path <- function(cfg, file) file.path(cfg$step_dir, 'tables', file)

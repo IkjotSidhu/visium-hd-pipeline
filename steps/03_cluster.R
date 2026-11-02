@@ -135,6 +135,28 @@ for (r in cl$resolutions) {
   ggsave(fig_path(current, 'cluster_by_replicate.pdf'), p_comp, width = 12, height = 5)
   ggsave(fig_path(current, 'cluster_by_replicate.png'), p_comp, width = 12, height = 5, dpi = 100)
 
+  # ---- SpotSweeper flags per cluster (reference for spotting low-quality clusters) ----
+  if ('spotsweeper' %in% colnames(md)) {
+    qc2 <- secondary_qc_cfg(cfg)                                        # <res>/secondary_qc/, one file per resolution
+    suffix <- paste0('_res_', resolution_label(r))
+    flag_cols <- grep('^spotsweeper_.*_flag$|^spotsweeper_any$', colnames(md), value = TRUE)
+    ss_tbl <- md |> group_by(cluster = .data[[column]]) |>
+      summarise(n_units = n(), across(all_of(flag_cols), list(n = sum, pct = \(x) round(100 * mean(x), 2))))
+    write_csv(ss_tbl, tab_path(qc2, paste0('spotsweeper_by_cluster', suffix, '.csv')))
+    ss_levels <- c(unname(spotsweeper_labels[cfg$spotsweeper$metrics]), 'multiple')
+    ss_comp <- md |> count(cluster = .data[[column]], spotsweeper) |>
+      group_by(cluster) |> mutate(pct = 100 * n / sum(n)) |> ungroup() |> filter(spotsweeper != 'not flagged')
+    p_ss <- ggplot(ss_comp, aes(cluster, pct, fill = spotsweeper)) +
+      geom_col() +
+      geom_hline(yintercept = 100 * mean(md$spotsweeper_any), linetype = 2) +
+      scale_fill_manual(values = make_palette(ss_levels), drop = FALSE) +
+      labs(title = paste('SpotSweeper-flagged units per cluster - resolution', resolution_label(r)),
+           subtitle = 'Dashed line: all units', x = 'Cluster', y = '% of cluster units flagged', fill = 'SpotSweeper') +
+      theme_classic()
+    ggsave(fig_path(qc2, paste0('spotsweeper_by_cluster', suffix, '.pdf')), p_ss, width = 12, height = 5)
+    ggsave(fig_path(qc2, paste0('spotsweeper_by_cluster', suffix, '.png')), p_ss, width = 12, height = 5, dpi = 100)
+  }
+
   # ---- Clusters by condition ----
   cond <- cfg$de$condition_col
   if (cond %in% colnames(md)) {

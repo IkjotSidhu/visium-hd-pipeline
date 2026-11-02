@@ -109,6 +109,18 @@ qc:
     group_cols: [condition, donor, tissue] # each summarised separately
 ```
 
+**Flag low-quality spots (SpotSweeper)** — after QC filtering, each bin/cell is compared with
+its nearest neighbours in the same strip and labelled if its UMIs or genes are far lower, or
+its mitochondrial % far higher. Nothing is removed. Flags are stored in the metadata
+(`spotsweeper`, `spotsweeper_any`, one flag and z-score per metric). Maps, tables and the
+share of flagged units per cluster at every resolution are in `<bin size>/secondary_qc/`.
+```yaml
+spotsweeper:
+  metrics: [umi, genes, mito]
+  n_neighbors: 36
+  cutoff: 2.5
+```
+
 **Choose clustering resolutions** — the default sweeps 0.1 to 2.0 in steps of 0.1; every
 resolution gets its own UMAP, spatial maps and markers. List fewer to save time and space:
 ```yaml
@@ -209,7 +221,7 @@ lsf:
 | Step | Does | Key outputs |
 |---|---|---|
 | **01** assign replicates | Finds each tissue piece and names it from the sample sheet | Assignment tables, overlay on the H&E, one H&E image per strip |
-| **02** load & QC | Loads bins/cells with the high-resolution H&E, adds sample-sheet columns, filters | `qc_report.html`, QC tables by group/sample/replicate, Space Ranger metrics, UMI-vs-genes plots, QC maps |
+| **02** load & QC | Loads bins/cells with the high-resolution H&E, adds sample-sheet columns, filters, labels SpotSweeper outliers | `qc_report.html`, QC tables by group/sample/replicate, Space Ranger metrics, UMI-vs-genes plots, QC maps |
 | **03** cluster | Normalises, sketches, clusters at each resolution, projects to every bin | UMAPs (also split by condition), clustree, cluster make-up per replicate and condition, cluster maps |
 | **04** markers | Marker genes for each cluster, at each resolution | Marker tables, dot plot, heatmap |
 | **05** BANKSY | Spatial domains (expression + neighbourhood) | Domain labels and maps |
@@ -235,6 +247,7 @@ output/
 │   ├── 05_banksy/res_<r>/
 │   ├── 06_pseudobulk_de/
 │   ├── 07_rctd/  08_annotation/res_<r>/  09_pathways/
+│   ├── secondary_qc/            SpotSweeper flags: maps, tables, flagged share per cluster
 │   └── rds/                     Seurat objects passed between steps
 ├── index.html                   overview of the whole run
 └── logs/
