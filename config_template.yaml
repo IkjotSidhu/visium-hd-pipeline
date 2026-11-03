@@ -66,7 +66,7 @@ markers:
 # UMIs / genes are far below, or mito % far above, their nearest neighbours in the
 # same strip. Nothing is removed; flags go into the metadata and <res>/secondary_qc/.
 spotsweeper:
-  run: true
+  run: false                    # off by default; true labels (never removes) local outliers
   metrics: [umi, genes, mito]   # low UMIs, low detected genes, high mito %
   n_neighbors: 36
   cutoff: 2.5                   # robust z-score; z-scores are saved, so any cutoff can be re-applied

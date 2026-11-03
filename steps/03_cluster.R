@@ -152,11 +152,10 @@ for (r in cl$resolutions) {
       mutate(spotsweeper = factor(spotsweeper, levels = ss_levels))
     p_ss <- ggplot(ss_comp, aes(cluster, pct, fill = spotsweeper)) +
       geom_col() +
-      geom_hline(yintercept = 100 * mean(md$spotsweeper_any), linetype = 2) +
       scale_x_discrete(drop = FALSE) +                                 # clusters with no flags shown at 0
       scale_fill_manual(values = make_palette(ss_levels), drop = FALSE) +
       labs(title = paste('SpotSweeper-flagged units per cluster - resolution', resolution_label(r)),
-           subtitle = 'Dashed line: all units', x = 'Cluster', y = '% of cluster units flagged', fill = 'SpotSweeper') +
+           x = 'Cluster', y = '% of cluster units flagged', fill = 'SpotSweeper') +
       theme_classic()
     ggsave(fig_path(qc2, paste0('spotsweeper_by_cluster', suffix, '.pdf')), p_ss, width = 12, height = 5)
     ggsave(fig_path(qc2, paste0('spotsweeper_by_cluster', suffix, '.png')), p_ss, width = 12, height = 5, dpi = 100)

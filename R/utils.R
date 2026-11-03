@@ -43,7 +43,7 @@ default_config <- list(
                   gene_id_type = 'symbol', min_size = 15, max_size = 500, eps = 1e-10),
   report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
-  spotsweeper = list(run = TRUE, metrics = c('umi', 'genes', 'mito'),   # step 02: label (not remove) local outliers
+  spotsweeper = list(run = FALSE, metrics = c('umi', 'genes', 'mito'),   # step 02: label (not remove) local outliers
                      n_neighbors = 36, cutoff = 2.5),
   banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = (1:20) / 10, pca_dims = 30),
   de = list(
@@ -356,7 +356,7 @@ secondary_qc_cfg <- function(cfg) {
 }
 # ---- Per-cluster QC summary (secondary QC) ----
 # Table + box plots of UMIs, genes and mito % for each cluster of one resolution,
-# written to <res>/secondary_qc/ next to the SpotSweeper bars. Linear scale; boxes
+# written to <res>/secondary_qc/. Linear scale; boxes
 # are drawn from precomputed quartiles (Tukey whiskers, outlier points not drawn).
 write_cluster_qc <- function(md, column, r, cfg) {
   qc2 <- secondary_qc_cfg(cfg)
@@ -368,7 +368,7 @@ write_cluster_qc <- function(md, column, r, cfg) {
     pivot_longer(-cluster, names_to = 'column', values_to = 'value') |>
     mutate(metric = factor(names(metrics)[match(column, metrics)], levels = names(metrics)),
            value = replace_na(value, 0))                             # mito % is NA for bins with no counts
-  # Table: n, median and quartiles per cluster and metric, plus the SpotSweeper share if present
+  # Table: n, median and quartiles per cluster and metric
   tbl <- long |>
     group_by(cluster, metric) |>
     summarise(median = median(value), q25 = quantile(value, 0.25), q75 = quantile(value, 0.75), .groups = 'drop') |>
@@ -377,10 +377,6 @@ write_cluster_qc <- function(md, column, r, cfg) {
     left_join(md |> count(cluster = .data[[column]], name = 'n_units'), by = 'cluster') |>
     relocate(n_units, .after = cluster) |>
     mutate(across(where(is.double), \(x) round(x, 2)))
-  if ('spotsweeper_any' %in% colnames(md)) {
-    tbl <- tbl |> left_join(md |> group_by(cluster = .data[[column]]) |>
-                              summarise(spotsweeper_flagged_pct = round(100 * mean(spotsweeper_any), 2)), by = 'cluster')
-  }
   write_csv(tbl, tab_path(qc2, paste0('cluster_qc', suffix, '.csv')))
   # Box statistics per cluster (whiskers = most extreme value within 1.5 IQR of the box)
   box <- long |>
@@ -388,14 +384,12 @@ write_cluster_qc <- function(md, column, r, cfg) {
     summarise(q25 = quantile(value, 0.25), q50 = median(value), q75 = quantile(value, 0.75),
               lo = min(value[value >= q25 - 1.5 * (q75 - q25)]), hi = max(value[value <= q75 + 1.5 * (q75 - q25)]),
               .groups = 'drop')
-  overall <- long |> group_by(metric) |> summarise(median = median(value))
   p <- ggplot(box, aes(cluster, fill = cluster)) +
     geom_boxplot(aes(ymin = lo, lower = q25, middle = q50, upper = q75, ymax = hi), stat = 'identity') +
-    geom_hline(data = overall, aes(yintercept = median), linetype = 2) +
     facet_wrap(~metric, ncol = 1, scales = 'free_y') +
     scale_fill_manual(values = make_palette(levels(factor(box$cluster))), guide = 'none') +
     labs(title = paste('QC metrics per cluster - resolution', resolution_label(r)),
-         subtitle = 'Dashed line: median of all units', x = 'Cluster', y = NULL) +
+         x = 'Cluster', y = NULL) +
     theme_classic()
   ggsave(fig_path(qc2, paste0('cluster_qc', suffix, '.pdf')), p, width = 12, height = 9)
   ggsave(fig_path(qc2, paste0('cluster_qc', suffix, '.png')), p, width = 12, height = 9, dpi = 100)
