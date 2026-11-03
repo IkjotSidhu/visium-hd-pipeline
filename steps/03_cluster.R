@@ -135,7 +135,10 @@ for (r in cl$resolutions) {
   ggsave(fig_path(current, 'cluster_by_replicate.pdf'), p_comp, width = 12, height = 5)
   ggsave(fig_path(current, 'cluster_by_replicate.png'), p_comp, width = 12, height = 5, dpi = 100)
 
-  # ---- SpotSweeper flags per cluster (reference for spotting low-quality clusters) ----
+  # ---- QC metrics per cluster (secondary QC: reference for spotting low-quality clusters) ----
+  write_cluster_qc(md, column, r, current)
+
+  # ---- SpotSweeper flags per cluster ----
   if ('spotsweeper' %in% colnames(md)) {
     qc2 <- secondary_qc_cfg(cfg)                                        # <res>/secondary_qc/, one file per resolution
     suffix <- paste0('_res_', resolution_label(r))

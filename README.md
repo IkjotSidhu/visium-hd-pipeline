@@ -113,7 +113,9 @@ qc:
 its nearest neighbours in the same strip and labelled if its UMIs or genes are far lower, or
 its mitochondrial % far higher. Nothing is removed. Flags are stored in the metadata
 (`spotsweeper`, `spotsweeper_any`, one flag and z-score per metric). Maps, tables and the
-share of flagged units per cluster at every resolution are in `<bin size>/secondary_qc/`.
+share of flagged units per cluster at every resolution are in `<bin size>/secondary_qc/`,
+next to a QC summary per cluster (`cluster_qc_res_<r>`: median and quartiles of UMIs,
+genes and mito %, with box plots) for judging whether a cluster is low quality.
 ```yaml
 spotsweeper:
   metrics: [umi, genes, mito]
@@ -247,7 +249,7 @@ output/
 │   ├── 05_banksy/res_<r>/
 │   ├── 06_pseudobulk_de/
 │   ├── 07_rctd/  08_annotation/res_<r>/  09_pathways/
-│   ├── secondary_qc/            SpotSweeper flags: maps, tables, flagged share per cluster
+│   ├── secondary_qc/            SpotSweeper flags and QC metrics per cluster
 │   └── rds/                     Seurat objects passed between steps
 ├── index.html                   overview of the whole run
 └── logs/
