@@ -26,7 +26,7 @@ default_config <- list(
   qc = list(                              # each value: one number for all resolutions, or a map
     min_counts   = 50,                    #   per resolution, e.g. {"8": 50, "16": 100, cells: 50}
     min_features = 0,                     # min genes per bin/cell
-    max_mt_pct   = 50,                    # max mitochondrial %; 100 disables
+    max_mt_pct   = 100,                   # max mitochondrial %; 100 = no filter (default)
     report = list(sample_col = 'library_id', group_cols = NULL, max_rows = 100)
   ),
   clustering = list(
