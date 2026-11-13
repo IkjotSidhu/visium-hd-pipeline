@@ -113,10 +113,12 @@ qc:
 and box plots of UMIs, genes and mito % per cluster (`cluster_qc_res_<r>`), for judging
 whether a cluster is low quality.
 
-**Flag low-quality spots (SpotSweeper, off by default)** — after QC filtering, each bin/cell is
-compared with its nearest neighbours in the same strip and labelled if its UMIs or genes are
-far lower, or its mitochondrial % far higher. Nothing is removed. Flags go into the metadata,
-with maps, tables and the share of flagged units per cluster in `<bin size>/secondary_qc/`.
+**SpotSweeper check (on by default, never filters)** — after QC filtering, each bin/cell is
+compared with its 36 nearest neighbours in the same strip and labelled if its UMIs or genes are
+far lower, or its mitochondrial % far higher (robust z-score beyond 3, the SpotSweeper defaults).
+Nothing is removed. Flags go into the metadata; % flagged per strip, z-score histograms, H&E maps
+and the share of flagged units per cluster go to `<bin size>/secondary_qc/spotsweeper/`.
+Set `run: false` to skip it.
 ```yaml
 spotsweeper:
   run: true
@@ -251,7 +253,7 @@ output/
 │   ├── 05_banksy/res_<r>/
 │   ├── 06_pseudobulk_de/
 │   ├── 07_rctd/  08_annotation/res_<r>/  09_pathways/
-│   ├── secondary_qc/            QC metrics per cluster
+│   ├── secondary_qc/            QC metrics per cluster; spotsweeper/ = SpotSweeper check
 │   └── rds/                     Seurat objects passed between steps
 ├── index.html                   overview of the whole run
 └── logs/

@@ -172,52 +172,15 @@ merged <- if (length(obj_list) > 1) merge(obj_list[[1]], obj_list[-1], add.cell.
   RenameCells(obj_list[[1]], add.cell.id = names(obj_list))
 log_msg(cfg, 'Merged: ', ncol(merged), ' ', unit_label, ' x ', nrow(merged), ' genes')
 
-# ---- SpotSweeper: label local outliers (nothing is removed) ----
-# Each retained unit is compared with its n_neighbors nearest units in the same
-# strip (robust z-score of log1p values); |z| beyond the cutoff in the bad
-# direction flags it. Flags and z-scores go into the metadata for later steps.
+# ---- SpotSweeper check: label local outliers (nothing is removed) ----
+# Flags and z-scores go into the metadata; tables, histograms and H&E maps go to
+# <res>/secondary_qc/spotsweeper/ (see run_spotsweeper() in R/utils.R).
 if (isTRUE(cfg$spotsweeper$run)) {
-  ss <- cfg$spotsweeper
-  qc2 <- secondary_qc_cfg(cfg)                                          # tables/figures go to <res>/secondary_qc/
-  tests <- tibble(key = c('umi', 'genes', 'mito'), column = c(count_col, feat_col, 'percent.mt'),
-                  direction = c('lower', 'lower', 'higher'), label = unname(spotsweeper_labels[c('umi', 'genes', 'mito')])) |>
-    filter(key %in% ss$metrics)
-  md <- merged[[]] |> rownames_to_column('cell') |> mutate(percent.mt = replace_na(percent.mt, 0))
-  spe <- SpatialExperiment::SpatialExperiment(
-    colData = S4Vectors::DataFrame(md |> select(cell, replicate_id, x_fullres, y_fullres, all_of(tests$column)), row.names = md$cell),
-    spatialCoordsNames = c('x_fullres', 'y_fullres'))
-  for (i in seq_len(nrow(tests)))
-    spe <- SpotSweeper::localOutliers(spe, metric = tests$column[i], direction = tests$direction[i], n_neighbors = ss$n_neighbors,
-                                      samples = 'replicate_id', log = TRUE, cutoff = ss$cutoff)
-  cd <- as.data.frame(SummarizedExperiment::colData(spe))[md$cell, ]     # localOutliers reorders by strip
-
-  # One z-score and one flag column per metric, a combined flag and a single label for maps
-  flags <- md |> select(cell, replicate_id, library_id)
-  for (i in seq_len(nrow(tests))) {
-    flags[[paste0('spotsweeper_', tests$key[i], '_z')]]    <- cd[[paste0(tests$column[i], '_z')]]
-    flags[[paste0('spotsweeper_', tests$key[i], '_flag')]] <- cd[[paste0(tests$column[i], '_outliers')]]
-  }
-  flag_cols <- paste0('spotsweeper_', tests$key, '_flag')
-  n_flags <- rowSums(as.matrix(flags[flag_cols]))
-  flags$spotsweeper_any <- n_flags > 0
-  flags$spotsweeper <- case_when(n_flags == 0 ~ 'not flagged', n_flags > 1 ~ 'multiple',
-                                 TRUE ~ tests$label[max.col(as.matrix(flags[flag_cols]), ties.method = 'first')])
+  md <- merged[[]] |> rownames_to_column('cell')
+  flags <- run_spotsweeper(md, cfg, sheet)
   for (col in setdiff(names(flags), c('cell', 'replicate_id', 'library_id'))) merged[[col]] <- flags[[col]]
-  write_csv(flags, tab_path(qc2, 'spotsweeper_flags.csv.gz'))
-
-  # Per-strip summary: units and % flagged by each metric and by any
-  summary_ss <- flags |> group_by(replicate_id) |>
-    summarise(n_units = n(), across(all_of(c(flag_cols, 'spotsweeper_any')), list(n = sum, pct = \(x) round(100 * mean(x), 2))))
-  write_csv(summary_ss, tab_path(qc2, 'spotsweeper_summary.csv'))
   log_msg(cfg, 'SpotSweeper: ', sum(flags$spotsweeper_any), ' of ', nrow(flags), ' ', unit_label, ' flagged (cutoff ',
-          ss$cutoff, ', ', ss$n_neighbors, ' neighbours)')
-
-  # Maps of the flags over the H&E (per capture area and per strip)
-  levels_ss <- c('not flagged', tests$label, 'multiple')
-  pal_ss <- c('not flagged' = highlight[['ns']], make_palette(c(tests$label, 'multiple')))
-  map_df <- md |> select(cell, replicate_id, library_id, x_fullres, y_fullres) |>
-    mutate(spotsweeper = factor(flags$spotsweeper, levels = levels_ss))
-  save_spatial(map_df, 'spotsweeper', qc2, sheet, 'spotsweeper_flags', palette = pal_ss[levels_ss], label = 'SpotSweeper')
+          cfg$spotsweeper$cutoff, ', ', cfg$spotsweeper$n_neighbors, ' neighbours; nothing removed)')
 }
 
 saveRDS(merged, rds_path(cfg, '02_load_qc'))

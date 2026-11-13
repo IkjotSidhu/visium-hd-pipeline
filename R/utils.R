@@ -43,7 +43,7 @@ default_config <- list(
                   gene_id_type = 'symbol', min_size = 15, max_size = 500, eps = 1e-10),
   report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
-  spotsweeper = list(run = FALSE, metrics = c('umi', 'genes', 'mito'),   # step 02: label (not remove) local outliers
+  spotsweeper = list(run = TRUE, metrics = c('umi', 'genes', 'mito'),    # step 02: label (never remove) local outliers, as a check
                      n_neighbors = 36, cutoff = 3),          # SpotSweeper package defaults
   banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = (1:20) / 10, pca_dims = 30),
   de = list(
@@ -394,6 +394,116 @@ write_cluster_qc <- function(md, column, r, cfg) {
   ggsave(fig_path(qc2, paste0('cluster_qc', suffix, '.pdf')), p, width = 12, height = 9)
   ggsave(fig_path(qc2, paste0('cluster_qc', suffix, '.png')), p, width = 12, height = 9, dpi = 100)
   invisible(tbl)
+}
+
+# ---- SpotSweeper check (secondary QC; labels only, never filters) ----
+# Output folder: <res>/secondary_qc/spotsweeper/{figures,tables}
+spotsweeper_cfg <- function(cfg) {
+  cfg$step_dir <- file.path(cfg$output_dir, cfg$res_label, 'secondary_qc', 'spotsweeper')
+  for (d in c('figures', 'tables')) dir.create(file.path(cfg$step_dir, d), recursive = TRUE, showWarnings = FALSE)
+  cfg
+}
+
+# Each unit is compared with its n_neighbors nearest units in the same strip
+# (robust z-score of log1p values); |z| beyond the cutoff in the bad direction
+# flags it. md needs: cell, replicate_id, library_id, x_fullres, y_fullres,
+# nCount_/nFeature_<assay> and percent.mt. Writes flags, a per-strip summary,
+# % flagged per strip, z-score histograms and H&E maps; returns the flag table.
+run_spotsweeper <- function(md, cfg, sheet) {
+  ss <- cfg$spotsweeper
+  out <- spotsweeper_cfg(cfg)
+  assay <- paste0('Spatial.', cfg$res_label)
+  tests <- tibble(key = c('umi', 'genes', 'mito'), column = c(paste0('nCount_', assay), paste0('nFeature_', assay), 'percent.mt'),
+                  direction = c('lower', 'lower', 'higher'), label = unname(spotsweeper_labels[c('umi', 'genes', 'mito')])) |>
+    filter(key %in% ss$metrics)
+  md <- md |> mutate(percent.mt = replace_na(percent.mt, 0))            # mito % is NA for bins with no counts
+  spe <- SpatialExperiment::SpatialExperiment(
+    colData = S4Vectors::DataFrame(md |> select(cell, replicate_id, x_fullres, y_fullres, all_of(tests$column)), row.names = md$cell),
+    spatialCoordsNames = c('x_fullres', 'y_fullres'))
+  for (i in seq_len(nrow(tests)))
+    spe <- SpotSweeper::localOutliers(spe, metric = tests$column[i], direction = tests$direction[i], n_neighbors = ss$n_neighbors,
+                                      samples = 'replicate_id', log = TRUE, cutoff = ss$cutoff)
+  cd <- as.data.frame(SummarizedExperiment::colData(spe))[md$cell, ]     # localOutliers reorders by strip
+
+  # One z-score and one flag column per metric, a combined flag and a single label for maps
+  flags <- md |> select(cell, replicate_id, library_id)
+  for (i in seq_len(nrow(tests))) {
+    flags[[paste0('spotsweeper_', tests$key[i], '_z')]]    <- cd[[paste0(tests$column[i], '_z')]]
+    flags[[paste0('spotsweeper_', tests$key[i], '_flag')]] <- cd[[paste0(tests$column[i], '_outliers')]]
+  }
+  flag_cols <- paste0('spotsweeper_', tests$key, '_flag')
+  n_flags <- rowSums(as.matrix(flags[flag_cols]))
+  flags$spotsweeper_any <- n_flags > 0
+  flags$spotsweeper <- case_when(n_flags == 0 ~ 'not flagged', n_flags > 1 ~ 'multiple',
+                                 TRUE ~ tests$label[max.col(as.matrix(flags[flag_cols]), ties.method = 'first')])
+  write_csv(flags, tab_path(out, 'spotsweeper_flags.csv.gz'))
+
+  # Per-strip summary: units and % flagged by each metric and by any
+  summary_ss <- flags |> group_by(replicate_id) |>
+    summarise(n_units = n(), across(all_of(c(flag_cols, 'spotsweeper_any')), list(n = sum, pct = \(x) round(100 * mean(x), 2))))
+  write_csv(summary_ss, tab_path(out, 'spotsweeper_summary.csv'))
+
+  # % flagged per strip, per metric and any metric
+  metric_pal <- make_palette(c(tests$label, 'any metric'))
+  strip_long <- flags |> pivot_longer(all_of(c(flag_cols, 'spotsweeper_any')), names_to = 'metric', values_to = 'flagged') |>
+    mutate(metric = factor(c(setNames(tests$label, flag_cols), spotsweeper_any = 'any metric')[metric], levels = names(metric_pal))) |>
+    group_by(replicate_id, metric) |> summarise(pct = 100 * mean(flagged), .groups = 'drop')
+  p_strip <- ggplot(strip_long, aes(replicate_id, pct, fill = metric)) +
+    geom_col(position = position_dodge(preserve = 'single')) +
+    scale_fill_manual(values = metric_pal) +
+    labs(title = paste0('SpotSweeper local outliers per strip (cutoff ', ss$cutoff, ', ', ss$n_neighbors, ' neighbours)'),
+         x = NULL, y = '% of units flagged', fill = 'Flagged for') +
+    theme_classic()
+  ggsave(fig_path(out, 'spotsweeper_flagged_by_strip.pdf'), p_strip, width = 10, height = 4)
+  ggsave(fig_path(out, 'spotsweeper_flagged_by_strip.png'), p_strip, width = 10, height = 4, dpi = 150)
+
+  # z-score histograms per strip and metric, with the cutoff
+  zl <- flags |> pivot_longer(ends_with('_z'), names_to = 'key', values_to = 'z') |>
+    mutate(key = sub('spotsweeper_(.*)_z', '\\1', key)) |>
+    left_join(tests |> select(key, label), by = 'key') |> mutate(label = factor(label, levels = tests$label))
+  cut_lines <- tests |> mutate(z = if_else(direction == 'lower', -ss$cutoff, ss$cutoff), label = factor(label, levels = tests$label))
+  p_z <- ggplot(zl, aes(z)) +
+    geom_histogram(bins = 100, fill = 'grey40') +
+    geom_vline(data = cut_lines, aes(xintercept = z), colour = highlight[['sig']]) +
+    scale_y_continuous(trans = 'log1p', breaks = c(0, 10, 100, 1000, 1e4, 1e5)) +
+    facet_grid(replicate_id ~ label, scales = 'free_x') +
+    labs(title = paste0('SpotSweeper robust z-scores vs ', ss$n_neighbors, ' nearest neighbours (red line = cutoff ', ss$cutoff, ')'),
+         x = 'Robust z-score of log1p(metric)', y = 'Units (log scale)') +
+    theme_classic()
+  ggsave(fig_path(out, 'spotsweeper_zscores.pdf'), p_z, width = 11, height = 9)
+  ggsave(fig_path(out, 'spotsweeper_zscores.png'), p_z, width = 11, height = 9, dpi = 150)
+
+  # Maps of the flags over the H&E (per capture area and per strip)
+  levels_ss <- c('not flagged', tests$label, 'multiple')
+  pal_ss <- c('not flagged' = highlight[['ns']], make_palette(c(tests$label, 'multiple')))
+  map_df <- md |> select(cell, replicate_id, library_id, x_fullres, y_fullres) |>
+    mutate(spotsweeper = factor(flags$spotsweeper, levels = levels_ss))
+  save_spatial(map_df, 'spotsweeper', out, sheet, 'spotsweeper_flags', palette = pal_ss[levels_ss], label = 'SpotSweeper')
+  flags
+}
+
+# Share of SpotSweeper-flagged units per cluster at one resolution (table + bars)
+write_spotsweeper_by_cluster <- function(md, column, r, cfg) {
+  out <- spotsweeper_cfg(cfg)
+  suffix <- paste0('_res_', resolution_label(r))
+  flag_cols <- grep('^spotsweeper_.*_flag$|^spotsweeper_any$', colnames(md), value = TRUE)
+  ss_tbl <- md |> group_by(cluster = .data[[column]]) |>
+    summarise(n_units = n(), across(all_of(flag_cols), list(n = sum, pct = \(x) round(100 * mean(x), 2))))
+  write_csv(ss_tbl, tab_path(out, paste0('spotsweeper_by_cluster', suffix, '.csv')))
+  ss_levels <- c(unname(spotsweeper_labels[cfg$spotsweeper$metrics]), 'multiple')
+  ss_comp <- md |> count(cluster = .data[[column]], spotsweeper) |>
+    group_by(cluster) |> mutate(pct = 100 * n / sum(n)) |> ungroup() |> filter(spotsweeper != 'not flagged') |>
+    mutate(spotsweeper = factor(spotsweeper, levels = ss_levels))
+  p_ss <- ggplot(ss_comp, aes(cluster, pct, fill = spotsweeper)) +
+    geom_col() +
+    scale_x_discrete(drop = FALSE) +                                   # clusters with no flags shown at 0
+    scale_fill_manual(values = make_palette(ss_levels), drop = FALSE) +
+    labs(title = paste('SpotSweeper-flagged units per cluster - resolution', resolution_label(r)),
+         x = 'Cluster', y = '% of cluster units flagged', fill = 'SpotSweeper') +
+    theme_classic()
+  ggsave(fig_path(out, paste0('spotsweeper_by_cluster', suffix, '.pdf')), p_ss, width = 12, height = 5)
+  ggsave(fig_path(out, paste0('spotsweeper_by_cluster', suffix, '.png')), p_ss, width = 12, height = 5, dpi = 100)
+  invisible(ss_tbl)
 }
 
 fig_path <- function(cfg, file) file.path(cfg$step_dir, 'figures', file)

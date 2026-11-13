@@ -62,11 +62,12 @@ markers:
   min_pct: 0.1
   logfc_threshold: 0.25
 
-# Step 02: SpotSweeper labels local outliers after the QC filter - units whose
+# Step 02: SpotSweeper check - labels local outliers after the QC filter, units whose
 # UMIs / genes are far below, or mito % far above, their nearest neighbours in the
-# same strip. Nothing is removed; flags go into the metadata and <res>/secondary_qc/.
+# same strip. Nothing is removed; flags go into the metadata, tables and plots into
+# <res>/secondary_qc/spotsweeper/.
 spotsweeper:
-  run: false                    # off by default; true labels (never removes) local outliers
+  run: true                     # check only: labels local outliers and plots them, never removes
   metrics: [umi, genes, mito]   # low UMIs, low detected genes, high mito %
   n_neighbors: 36
   cutoff: 3                     # robust z-score (SpotSweeper default); z-scores are saved, so any cutoff can be re-applied
