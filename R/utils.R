@@ -450,7 +450,7 @@ make_palette <- function(levels, reference = NULL) {
     return(setNames(ctrl_treated, c(reference, setdiff(levels, reference))))
   pool <- if (n == 2) two_colours else
     Find(\(s) length(s) >= n, lab_swatches[c('s3', 's4', 's1', 's6', 's2')]) %||%
-    c(lab_swatches$s2, setdiff(categorical_palette, lab_swatches$s2))   # past 18: lab swatch, then fallback
+    c(lab_swatches$s2, setdiff(categorical_palette, c(lab_swatches$s2, '#7F7F7F', '#636363')))   # past 18: lab swatch, then fallback (minus greys that duplicate the swatch grey)
   # Beyond every listed colour, interpolate - neighbours get less distinct
   cols <- if (n <= length(pool)) pool[seq_len(n)] else grDevices::colorRampPalette(pool)(n)
   setNames(cols, levels)
