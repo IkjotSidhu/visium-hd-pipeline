@@ -44,7 +44,7 @@ default_config <- list(
   report = list(run = TRUE, max_table_rows = 20),
   markers = list(top_n = 10, min_pct = 0.1, logfc_threshold = 0.25),
   spotsweeper = list(run = FALSE, metrics = c('umi', 'genes', 'mito'),   # step 02: label (not remove) local outliers
-                     n_neighbors = 36, cutoff = 2.5),
+                     n_neighbors = 36, cutoff = 3),          # SpotSweeper package defaults
   banksy = list(run = TRUE, lambda = 0.2, k_geom = 15, resolutions = (1:20) / 10, pca_dims = 30),
   de = list(
     run            = TRUE,

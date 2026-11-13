@@ -122,7 +122,7 @@ spotsweeper:
   run: true
   metrics: [umi, genes, mito]
   n_neighbors: 36
-  cutoff: 2.5
+  cutoff: 3
 ```
 
 **Choose clustering resolutions** — the default sweeps 0.1 to 2.0 in steps of 0.1; every

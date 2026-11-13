@@ -69,7 +69,7 @@ spotsweeper:
   run: false                    # off by default; true labels (never removes) local outliers
   metrics: [umi, genes, mito]   # low UMIs, low detected genes, high mito %
   n_neighbors: 36
-  cutoff: 2.5                   # robust z-score; z-scores are saved, so any cutoff can be re-applied
+  cutoff: 3                     # robust z-score (SpotSweeper default); z-scores are saved, so any cutoff can be re-applied
 
 banksy:
   run: true
