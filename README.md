@@ -1,5 +1,7 @@
 # Visium HD Analysis Pipeline
 
+![Illustrated Visium HD workflow from tissue section to spatial neighborhoods](assets/visium-hd-pipeline-banner.png)
+
 Takes 10x Visium HD Space Ranger 4 output from raw counts to QC, clusters, markers,
 spatial domains, condition comparisons and pathways — for **8 µm bins, 16 µm bins and
 segmented cells** in one run. Capture areas that hold several tissue pieces (e.g.
